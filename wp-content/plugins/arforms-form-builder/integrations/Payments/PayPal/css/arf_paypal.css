@@ -1,0 +1,738 @@
+.delete_box {
+    float: left;
+}
+#frm_add_form_id {
+    height: 150px !important;
+}
+.page_title {
+    color: #353942;
+    font-weight: normal;
+    font-family: 'open_sansregular', Arial, Helvetica, Verdana, sans-serif;
+    line-height: normal;
+    font-size: 30px;
+    padding-bottom: 10px;
+    float: left;
+    clear: both;
+}
+.wrap_content {
+    clear: both;
+    margin-top: 0px !important;
+    margin-left: 0px;
+    margin-right: 0px;
+    padding: 25px;
+    background-color: #FFFFFF;
+    border: none;
+    -moz-border-radius: 0px;
+    -webkit-border-radius: 0px;
+    border-radius: 0px;
+}
+#arf_paypal_forms #example_wrapper a {
+    text-decoration: none;
+    color: #113E71;
+    outline: none;
+}
+.form-table td.tdclass_1 {
+    padding-left: 20px;
+}
+.bulk_add {
+    border: none;
+}
+#ui-datepicker-div {
+    display: none;
+}
+/* .delete_popup#delete_form_message{
+    top:83%;
+} */
+
+#delete_form_message .delete_column_arrow, .delete_row_arrow {
+    left: 25%;
+    margin-top: -15px;
+}
+.wrap #example_wrapper tr th.arf_col_action.arf_action_cell, .wrap #example_wrapper tr td.arf_action_cell {
+    width: 150px !important;
+}
+#arf_paypal_orders #example_wrapper tr th.arf_col_action.arf_action_cell, #arf_paypal_orders #example_wrapper tr td.arf_action_cell {
+    width: 110px !important;
+}
+#delete_form_message .delete_title {
+    left: -40%;
+    font-size: 17px !important;
+}
+.arfformentry_delete#delete_form_message {
+    top: 10%;
+}
+.arfformentry_delete#delete_form_message .delete_title {
+    left: -50%;
+    font-size: 17px !important;
+    margin-top: 8%;
+}
+.arfformentry_delete#delete_form_message .delete_column_arrow, .delete_row_arrow {
+    left: 13.5%;
+    margin-top: -15px;
+}
+/*.arf_selectbox dt{
+    height: 30px !important;
+}*/
+
+.paypal_fields_td {
+    padding-top: 15px !important;
+}
+.sltstandard {
+    height: 37px !important;
+}
+.bulk_add_remove {
+    padding-top: 10px !important;
+}
+.paypal_page, .paypal_page * {
+    box-sizing: border-box !important;
+}
+.tdclass {
+    height: 45px;
+}
+.paypal_page .arf_success_message, .paypal_page #error_message {
+    height: 45px !important;
+}
+#delete_bulk_paypal_form_message, #delete_bulk_transaction_message {
+    height: 200px !important;
+    top: 35% !important;;
+    left: 35%;
+}
+#arf_paypal_setting .lblsubtitle {
+    font-family: Asap-regular, 'aileron_regular', Arial, Helvetica, Verdana, sans-serif;
+    font-size: 14px !important;
+    color: #4e5462;
+    font-weight: normal !important;
+    padding-top: 11px;
+    display: inline-block;
+}
+#arf_paypal_setting .lbltitle {
+    font-family: Asap-medium, 'aileron_regular', Arial, Helvetica, Verdana, sans-serif;
+    font-size: 16px !important;
+    color: #4e5462;
+    font-weight: normal !important;
+}
+.lbltitle.titleclass {
+    padding: 30px 0px 20px 50px;
+}
+.txtmodal1 {
+    height: 35px !important;
+}
+#form_success_message_desc {
+    float: left;
+    margin-right: 15px;
+}
+.message_svg_icon svg {
+    height: 14px;
+    stroke-width: 14px;
+}
+#form_error_message_des {
+    float: left;
+    margin-right: 15px;
+}
+.arf_paypal_edit_settings {
+    margin-top: 75px;
+}
+.arf_paypal_list_forms {
+    margin-top: 75px;
+}
+.arf_paypal_order_list {
+    margin-top: 75px;
+}
+.arf_pp_valign_top {
+    vertical-align: top !important;
+}
+.arf_pp_valign_middle {
+    vertical-align: middle !important;
+}
+.arf_pp_valign_super {
+    vertical-align: super !important;
+}
+.arf_pp_select_box, .arf_pp_select_box ul {
+    width: 400px;
+}
+.arf_pp_error_msg {
+    display: none;
+    clear: both;
+}
+.arf_pp_selected_form {
+    padding-top: 5px !important;
+}
+.arf_pp_new_form_note {
+    padding-top: 3px !important;
+    text-shadow: none;
+    font-size: 12px;
+    font-style: italic;
+    float: left;
+    width: 100%;
+}
+.arf_pp_setting_input_box {
+    width: 400px;
+}
+.arf_pp_small_dd_field, .arf_pp_small_dd_field ul {
+    width: 211px;
+}
+.arf_pp_display_none {
+    display: none;
+}
+.arf_pp_display_none_imp {
+    display: none !important;
+}
+.arf_pp_display_block {
+    display: block;
+}
+.arf_pp_form_table {
+    width: 420px;
+}
+.arf_pp_radio_wrapper {
+    margin-left: 15px;
+}
+.arf_pp_no_paddingtop {
+    padding-top: 0px;
+}
+.arf_pp_single_payment_note {
+    font-size: 12px !important;
+    font-style: italic;
+    float: left;
+    padding-top: 0px;
+}
+.arf_pp_multiple_payment_note {
+    font-size: 12px !important;
+    font-style: italic;
+    float: left;
+    margin-left: 34px;
+    padding-top: 0px;
+}
+.arf_pp_type_label {
+    padding-top: 12px;
+}
+.arf_pp_amount_label {
+    padding-bottom: 9px;
+}
+.arf_pp_amount_field_wrapper {
+    padding-top: 13px;
+}
+.arf_pp_full_width {
+    float: left;
+    width: 100%;
+}
+.arf_pp_cl_service_type {
+    margin-top: 8px;
+}
+.arf_pp_display_inline_with_float {
+    float: left;
+    display: inline;
+}
+.arf_pp_display_inline_with_no_float {
+    float: none;
+    display: inline;
+}
+.arf_pp_cl_service_type_wrapper {
+    margin-left: 15px;
+}
+.arf_pp_cl_input_box {
+    width: 150px;
+}
+.arf_pp_ps_amount_wrapper {
+    float: left;
+    margin-top: 10px;
+    width: 100%;
+}
+.arf_pp_float_left {
+    float: left;
+}
+.arf_pp_field_required_icon {
+    float: left;
+    margin: 5px;
+}
+.arf_pp_auto_width_input {
+    width: auto !important;
+}
+.arf_pp_billing_cycle_data {
+    float: left;
+    margin: 10px 0 0 0;
+}
+.arf_pp_logic_multiple_subscription_div {
+    float: left;
+    margin: 2px 0 10px 0;
+}
+.arf_pp_billing_cycle_label {
+    float: left;
+    margin-right: 5px;
+}
+.arf_pp_rec_type_dd, .arf_pp_rec_type_dd ul {
+    width: 80px;
+}
+.arf_pp_all_rec_type_dd, .arf_pp_all_rec_type_dd ul {
+    width: 105px;
+}
+.arf_pp_recurring_time_label {
+    text-shadow: none;
+    font-size: 12px !important;
+    font-style: italic;
+    padding-top: 9px;
+}
+.arf_pp_cl_if_label {
+    float: left;
+    margin-left: 10px;
+}
+.arf_pp_cl_buttons {
+    float: left;
+    margin: 10px 0 0 10px;
+}
+body.rtl .arf_pp_cl_buttons{
+    margin:20px 0 0 10px;
+}
+.arf_pp_cl_field_wrapper {
+    float: left;
+    margin: 25px 0 0px 0px;
+    width: 100%;
+}
+.arf_pp_cl_duration_field_wrapper {
+    float: left;
+    width: 80px;
+    margin-right: 5px;
+}
+.arf_pp_float_right {
+    float: right;
+}
+.arf_pp_cl_rule_value_input {
+    width: 145px;
+    margin-left: 15px;
+}
+.arf_pp_ruccring_type_main_wrapper {
+    float: left;
+    margin-left: 15px;
+}
+.arf_pp_field_td {
+    margin-top: 15px;
+    display: block;
+}
+#conditional_logic_div_paypal {
+    width: auto;
+    margin-bottom: 20px;
+    font-size: 14px;
+}
+.arf_pp_cl_operator {
+    float: none;
+    display: inline-block;
+    position: relative;
+    top: 10px;
+}
+.arf_pp_cl_operator_dd, .arf_pp_cl_operator_dd ul {
+    width: 60px;
+}
+input#arf_paypal_trial_amount {
+    width: 105px;
+}
+.arf_arfaddnewrule_btn {
+    width: 140px !important;
+    height: 41px;
+}
+.arf_arfaddnewrule_btn.arfaddnewrule{
+    margin-top: 14px;
+    display: inline-block;
+}
+.arf_pp_no_border{
+    border:none;
+}
+.arf_pp_cl_field_dd {
+    float: none;
+    display: inline;
+    margin-left: 15px;
+}
+.arf_pp_cl_field_input {
+    width: auto !important;
+    margin-left: 15px;
+}
+.arf_pp_separator {
+    border-bottom: 1px solid #E3E4E7 !important;
+}
+.arf_pp_return_act_msg {
+    margin-left: 15px;
+    float: left;
+    text-shadow: none;
+    font-size: 12px;
+    font-style: italic;
+}
+.arf_pp_success_url_input {
+    width: 430px;
+}
+.arf_pp_form_success_msg {
+    width: 428px !important;
+}
+.arf_pp_no_float {
+    float: none;
+}
+.arf_pp_success_page_dd, .arf_pp_success_page_dd ul {
+    width: 195px;
+}
+.arf_pp_cancel_url_input {
+    width: 430px;
+}
+.arf_pp_notification_wrapper {
+    margin-top: 10px;
+    display: block;
+}
+.arf_pp_email_content_textarea {
+    width: 400px;
+}
+.arf_pp_no_text_shadow {
+    text-shadow: none;
+}
+.arf_pp_user_notification_wrapper {
+    padding-top: 25px;
+}
+.arf_pp_notification_note {
+    height: 20px !important;
+}
+.arf_pp_configuration_notes {
+    padding-left: 60px;
+}
+.arf_pp_submit_btn_wrapper {
+    clear: both;
+    margin-top: 50px;
+    margin-left: 232px;
+}
+.arf_pp_submit_btn_wrapper.arf_pp_old_version {
+    margin-left: 60px;
+}
+.arf_pp_save_btn {
+    width: 101px !important;
+    height: 41px;
+}
+.arf_pp_cancel_btn {
+    background-color: #DFECF2;
+    height: 41px;
+    width: 101px;
+    color: #000000;
+}
+.arf_paypal_add_new_config_button {
+    width: 205px !important;
+}
+.arf_pp_bulk_act_dd, .arf_pp_bulk_act_dd dt, .arf_pp_bulk_act_dd ul {
+    width: 130px;
+}
+.arf_pp_cb_all_checkbox {
+    margin-left: 12px;
+}
+.arf_pp_transaction_col {
+    text-align: center;
+}
+.arf_pp_total_amount_col {
+    text-align: center;
+}
+.arf-row-actions {
+    padding-top: 0px !important;
+}
+.arf_pp_delete_form_msg {
+    display: none;
+    left: 35%;
+}
+.documentation_link {
+    background: none;
+    padding-top: 40px;
+}
+.arf_pp_doc_link {
+    margin-right: 10px;
+}
+.arf_pp_support_link {
+    margin-left: 10px;
+}
+.arf_form_entry_left.arf_pp_select_form_label {
+    float: none;
+    text-align: left;
+}
+.arf_pp_form_list_dd {
+    float: none;
+    width: 400px !important;
+    margin-right: 60px;
+}
+.arf_pp_date_picker_wrapper {
+    position: relative;
+    float: left;
+    text-align: left;
+}
+body.rtl .arf_pp_date_picker_wrapper {
+    float: right;
+    text-align: right;
+}
+.arf_pp_from_sel_date {
+    float: left;
+}
+body.rtl .arf_pp_from_sel_date {
+    float: right;
+}
+.arf_pp_from_sel_date_label {
+    margin-left: 0px;
+}
+.arf_pp_from_date_input {
+    width: 120px;
+    height: 35px;
+    vertical-align: middle;
+}
+.arf_pp_to_date_input {
+    width: 120px;
+    height: 35px;
+    vertical-align: middle;
+}
+.arf_pp_form_date_button_wrapper {
+    float: left;
+    text-align: left;
+}
+.arf_pp_form_go_btn {
+    width: 35px !important;
+    height: 35px;
+}
+.arf_pp_complete_status {
+    color: #008000;
+}
+.arf_pp_incomplete_status {
+    color: #FFA500;
+}
+.arf_clear_both {
+    clear: both;
+}
+.arf_pp_save_btn.arf_pp_old_version {
+    width: 110px;
+    border: 0px;
+    color: #FFFFFF;
+    height: 40px;
+    border-radius: 3px;
+}
+.arf_pp_cancle_btn.arf_pp_old_version {
+    background-color: #FFFFFF;
+    border-radius: 3px 3px 3px 3px;
+    height: 41px;
+    width: 110px;
+}
+.arf_pp_success_msg {
+    margin-bottom: 0px;
+    margin-top: 15px;
+    width: 95%;
+    margin-left: 30px;
+}
+.arf_pp_success_msg .arf_success_message {
+    box-sizing: border-box;
+}
+.arf_pp_success_msg .arfsuccessmsgicon{
+    box-sizing: border-box;
+}
+.arf_pp_page_error_msg {
+    margin-bottom: 0px;
+    margin-top: 15px;
+    width: 95%;
+    margin-left: 30px;
+}
+.arf_pp_page_error_msg #frm_errors {
+    margin-bottom: 0px;
+    margin-top: 0px;
+}
+.arf_pp_page_error_msg #frm_errors li #error_message {
+    box-sizing: border-box;
+}
+.arf_pp_page_error_msg .arferrmsgicon{
+    box-sizing: border-box;
+}
+.arf_pp_create_new_btn_wrapper {
+    position: absolute;
+    right: 50px;
+}
+.arf_pp_add_new_config_btn {
+    width: 205px;
+    border: 0px;
+    color: #FFFFFF;
+    height: 40px;
+    border-radius: 3px;
+}
+.arf_pp_old_chk_all_wrapper {
+    display: inline-block;
+    position: relative;
+}
+th.col_action {
+    width: 125px;
+}
+.arf_pp_cursor_pointer {
+    cursor: pointer;
+}
+.arf_pp_old_delete_msgbox {
+    display: none;
+    left: 35%;
+}
+.arf_pp_old_delete_msgbox .arfdelete_modal_title img {
+    margin-top: -5px;
+}
+.arf_pp_old_delete_msgbox .arf_delete_modal_left img {
+    margin-right: 10px;
+}
+.arf_pp_old_delete_msgbox .arf_delete_modal_right img {
+    margin-right: 10px;
+}
+.arf_pp_entry_select_sub {
+    width: 100% !important;
+    float: left;
+    padding: 20px 0;
+    box-sizing: border-box;
+}
+.arf_pp_select_form_dd {
+    width: 65%;
+    float: left;
+    text-align: left
+}
+.arf_pp_old_datepicker_wrapper {
+    float: left;
+    text-align: left;
+    width: 65%;
+    margin-top: 15px;
+}
+.arf_pp_datepicker_from {
+    vertical-align: middle;
+    width: 105px;
+}
+.arf_pp_datepicker_to {
+    vertical-align: middle;
+    width: 105px;
+}
+.arf_pp_datepicker_submit_btn_wrapper {
+    width: 100%;
+    float: left;
+    text-align: left;
+    margin-top: 15px;
+}
+.arf_pp_datepicker_submit_btn {
+    width: 110px;
+    border: 0px;
+    color: #FFFFFF;
+    height: 40px;
+    border-radius: 3px;
+}
+.arf_pp_old_bulk_act_wrapper {
+    clear: both;
+    margin-bottom: 10px;
+}
+th.arf_pp_order_col_action {
+    width: 110px;
+}
+.arf_pp_view_entry_modal {
+    display: none;
+    max-height: 540px;
+    width: 800px;
+    left: 20%;
+}
+.arf_pp_text_align_center {
+    text-align: center;
+}
+.arf_pp_view_entry_modal_close img {
+    margin-right: 10px;
+}
+.arf_paypal_recurring_retry_lbl {
+    padding-top: 0px !important;
+    cursor: pointer !important;
+}
+.arf_pp_config_loader_icon{
+    display: none;
+    position: relative;
+    top: 8px;
+}
+
+.arf_pp_edit_loader{
+    float: none;
+    width: 20px;
+    height: 20px;
+    border: 3px solid #4786ff;
+    border-top: 3px solid transparent;
+    border-radius: 40px;
+    position: relative;
+    top: 5px;
+    display: none;
+    animation: arf_pp_edit_loader_spin 2s linear infinite;
+    -moz-animation: arf_pp_edit_loader_spin 2s linear infinite;
+    -o-animation: arf_pp_edit_loader_spin 2s linear infinite;
+    -webkit-animation: arf_pp_edit_loader_spin 2s linear infinite;
+    -ms-animation: arf_pp_edit_loader_spin 2s linear infinite;
+}
+
+.arf_pp_edit_loader.active{
+    display:inline-block;
+}
+
+@keyframes arf_pp_edit_loader_spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(-360deg);
+    }
+}
+@-webkit-keyframes arf_pp_edit_loader_spin{
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(-360deg);
+    }   
+}
+.arf_pp_list_bulk_action_wrapper{
+    width: 120px !important;
+}
+.arf_paypal_wp_notice{
+    background-color: #f7f7f7;
+    padding: 20px;
+    color: red;
+}
+
+.arf_paypal_wp_notice_text{
+    margin: 0 !important;
+    font-size: 20px !important;
+}
+
+.arf_paypal_wp_notice_continue{
+    margin: 10px 0 !important;
+    font-size: 16px !important;
+}
+.arf_paypal_list_forms .arf-row-actions .delete_popup#delete_form_message{
+    top: 55px;
+    right: -15px;
+}
+
+.arf_paypal_list_forms .arf-row-actions .delete_popup#delete_form_message .delete_column_arrow{
+    left: 15%;
+    margin-top:-15px;
+}
+
+.arf_paypal_order_list .arf-row-actions .delete_popup#delete_form_message{
+    top: 10px;
+    right: -15px;
+}
+
+.arf_paypal_order_list .arf-row-actions .delete_popup#delete_form_message .delete_column_arrow{
+    left: 25px;
+    margin-top:20px;
+}
+.wrap #example_wrapper .dataTables_filter#example_filter{
+    float:right;
+}
+.arfnewmodalclose .arf_entry_model_close{
+    position: absolute;
+}
+body.rtl .sltstandard{
+    float:right;
+}
+body.rtl .arf_pp_no_paddingtop{
+    padding-left: 560px;
+}
+body.rtl #arf_paypal_setting .lblsubtitle{
+    float:right;
+}
+body.rtl .arf_newaction_rounded_blue_button{
+    float:left;
+}
+body.rtl .arf_paypal_list_forms .arf-row-actions .delete_popup#delete_form_message .delete_column_arrow{
+    left:58%;
+}
+body.rtl .arf_paypal_list_forms .arf-row-actions .delete_popup#delete_form_message{
+    right:-75px;
+}
+body.rtl #delete_bulk_paypal_form_message, #delete_bulk_transaction_message{
+    top:30%;
+    left:35%;
+} 

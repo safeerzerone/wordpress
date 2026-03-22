@@ -1,0 +1,22 @@
+.arf_tccaptcha_Wrapper {
+  float:left;
+  clear: both;
+  max-width:100%;
+  overflow: hidden;
+  width:300px;
+  height: 65px;
+}
+.arf_tccaptcha_output_input{
+  visibility: hidden;
+  border: none;
+  display:none;
+  float: left;
+  height: 0 !important;
+  margin: 0 !important;
+  overflow: hidden;
+  padding: 0 !important;
+}
+.tccaptcha_res{
+  background-color: red;
+  padding: 1em;
+}

@@ -1,0 +1,1 @@
+"use strict";document.addEventListener("readystatechange",e=>{"complete"===document.readyState&&jQuery('.active[data-plugin="armember-membership/armember-membership.php"]').find('input[type="checkbox"]').attr("checked",!1).attr("disabled",!0)});

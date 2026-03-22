@@ -1,0 +1,42 @@
+/* @media screen and (max-width: 464px){
+
+} */
+.arf_tccaptcha_restricted_field{
+	cursor: not-allowed;
+	float: none;
+	margin: 0 auto;
+	width: 98%;
+	border: 1px #e0e3e6 solid;
+	border-radius: 4px;
+	-webkit-border-radius: 4px;
+	-o-border-radius: 4px;
+	-moz-border-radius: 4px;
+	height: 100%;
+	word-wrap: break-word;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-evenly;
+	align-items: center;
+}
+.arf_tccaptcha_float_left{
+	float:left;
+}
+
+.arf_tccaptcha_display_block{
+	display: block;
+}
+.arf_tccaptcha_editor_img_default{
+	width:60%;
+	height: auto;
+}
+.updated{
+	background-color: crimson;
+}
+
+.arf_tccaptcha_fieldiconbox {
+	width: 84px;
+}
+
+#tccaptcha.arflite_prevent_sorting{
+	pointer-events:none;
+}

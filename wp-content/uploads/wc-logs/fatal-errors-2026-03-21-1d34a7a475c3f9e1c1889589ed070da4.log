@@ -1,0 +1,21 @@
+2026-03-21T17:13:41+00:00 CRITICAL Uncaught WC_Stripe_Exception: WP_Error Object
+(
+    [errors] => Array
+        (
+            [http_request_failed] => Array
+                (
+                    [0] => A valid URL was not provided.
+                )
+
+        )
+
+    [error_data] => Array
+        (
+        )
+
+    [additional_data:protected] => Array
+        (
+        )
+
+)
+ in C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-content\plugins\woocommerce-gateway-stripe\includes\class-wc-stripe-api.php:269 CONTEXT: {"error":{"type":1,"file":"C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-content\plugins\woocommerce-gateway-stripe\includes\class-wc-stripe-api.php","line":269},"remote-logging":true,"backtrace":["#0 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-content\plugins\woocommerce-gateway-stripe\includes\class-wc-stripe-api.php(661): WC_Stripe_API::request(Array, 'payment_method_...')n#1 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-content\plugins\woocommerce-gateway-stripe\includes\class-wc-stripe-payment-method-configurations.php(476): WC_Stripe_API->update_payment_method_configurations('pmc_1TDT3IGvz5b...', Array)n#2 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-content\plugins\woocommerce-gateway-stripe\includes\payment-methods\class-wc-stripe-upe-payment-gateway.php(846): WC_Stripe_Payment_Method_Configurations::update_payment_method_configuration(Array, Array)n#3 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-content\plugins\woocommerce-gateway-stripe\includes\admin\class-wc-rest-stripe-settings-controller.php(644): WC_Stripe_UPE_Payment_Gateway->update_enabled_payment_methods(Array)n#4 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-content\plugins\woocommerce-gateway-stripe\includes\admin\class-wc-rest-stripe-settings-controller.php(285): WC_REST_Stripe_Settings_Controller->update_enabled_payment_methods(Array, true)n#5 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\rest-api\class-wp-rest-server.php(1292): WC_REST_Stripe_Settings_Controller->update_settings(Object(WP_REST_Request))n#6 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\rest-api\class-wp-rest-server.php(1125): WP_REST_Server->respond_to_request(Object(WP_REST_Request), '/wc/v3/wc_strip...', Array, NULL)n#7 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\rest-api\class-wp-rest-server.php(439): WP_REST_Server->dispatch(Object(WP_REST_Request))n#8 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\rest-api.php(467): WP_REST_Server->serve_request('/wc/v3/wc_strip...')n#9 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\class-wp-hook.php(341): rest_api_loaded(Object(WP))n#10 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\class-wp-hook.php(365): WP_Hook->apply_filters(NULL, Array)n#11 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\plugin.php(570): WP_Hook->do_action(Array)n#12 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\class-wp.php(418): do_action_ref_array('parse_request', Array)n#13 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\class-wp.php(821): WP->parse_request('')n#14 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-includes\functions.php(1343): WP->main('')n#15 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\wp-blog-header.php(16): wp()n#16 C:\nginx-itrationmatrix\nginx-1.21.1\wordpress\index.php(17): require('C:\\nginx-itrati...')n#17 {main}n  thrown"]}

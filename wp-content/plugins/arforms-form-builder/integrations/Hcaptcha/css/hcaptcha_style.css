@@ -1,0 +1,35 @@
+.arf_hcaptcha_restricted_field{
+	cursor: not-allowed;
+	float: none;
+	margin: 0 auto;
+	width: 98%;
+	border: 1px #e0e3e6 solid;
+	border-radius: 4px;
+	-webkit-border-radius: 4px;
+	-o-border-radius: 4px;
+	-moz-border-radius: 4px;
+	height: 100%;
+	word-wrap: break-word;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-evenly;
+	align-items: center;
+}
+
+
+.updated{
+	background-color: crimson;
+}
+
+.arf_hcaptcha_editor_img_default{
+	width:60%;
+	height: auto;
+}
+
+#hcaptcha.arflite_prevent_sorting{
+	pointer-events:none;
+}
+
+.arf_hcaptcha_fieldiconbox{
+	width: 84px;
+}

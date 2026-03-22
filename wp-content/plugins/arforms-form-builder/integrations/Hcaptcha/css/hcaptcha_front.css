@@ -1,0 +1,19 @@
+.arf_hcaptcha_output_input{
+	visibility: hidden;
+	border: none;
+	display:none;
+	float: left;
+	height: 0 !important;
+	margin: 0 !important;
+	overflow: hidden;
+	padding: 0 !important;
+  }
+
+  .arf_hcaptcha_Wrapper {
+	float:left;
+	clear: both;
+	max-width:100%;
+	overflow: hidden;
+	width:300px;
+	height: 65px;
+  }
