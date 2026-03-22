@@ -7,61 +7,63 @@ namespace Automattic\WooCommerce\Blocks\Utils;
 use InvalidArgumentException;
 use Automattic\WooCommerce\Blocks\Package;
 use Automattic\WooCommerce\Blocks\Domain\Services\Hydration;
+use Automattic\WooCommerce\StoreApi\StoreApi;
+use Automattic\WooCommerce\StoreApi\SchemaController;
+use Automattic\WooCommerce\StoreApi\Utilities\CartController;
+use Automattic\WooCommerce\StoreApi\Schemas\V1\CartSchema;
 
 /**
  * Manages the registration of interactivity config and state that is commonly shared by WooCommerce blocks.
- * Initialization only happens on the first call to load_store_config.
- *
- * This is a private API and may change in future versions.
+ * Initialization only happens on the first call to initialize_shared_config.
+ * Intended to be used as a singleton.
  */
-class BlocksSharedState {
+trait BlocksSharedState {
 
 	/**
 	 * The consent statement for using private APIs of this class.
 	 *
 	 * @var string
 	 */
-	private static string $consent_statement = 'I acknowledge that using private APIs means my theme or plugin will inevitably break in the next version of WooCommerce';
+	private static $consent_statement = 'I acknowledge that using private APIs means my theme or plugin will inevitably break in the next version of WooCommerce';
 
 	/**
 	 * The namespace for the config.
 	 *
 	 * @var string
 	 */
-	private static string $settings_namespace = 'woocommerce';
+	private static $settings_namespace = 'woocommerce';
 
 	/**
 	 * Whether the core config has been registered.
 	 *
-	 * @var bool
+	 * @var boolean
 	 */
-	private static bool $core_config_registered = false;
+	private static $core_config_registered = false;
 
 	/**
 	 * Cart state.
 	 *
-	 * @var array|null
+	 * @var mixed
 	 */
-	private static ?array $blocks_shared_cart_state = null;
+	private static $blocks_shared_cart_state;
 
 	/**
-	 * Prevent caching on certain pages.
-	 *
-	 * @return void
+	 * Prevent caching on certain pages
 	 */
-	private static function prevent_cache(): void {
+	private static function prevent_cache() {
 		\WC_Cache_Helper::set_nocache_constants();
 		nocache_headers();
 	}
 
+
 	/**
 	 * Check that the consent statement was passed.
 	 *
-	 * @param string $consent_statement The consent statement string.
+	 * @param string $consent_statement - The consent statement string.
 	 * @return true
-	 * @throws InvalidArgumentException If the statement does not match.
+	 * @throws \InvalidArgumentException - If the statement does not match the class consent statement string.
 	 */
-	private static function check_consent( string $consent_statement ): bool {
+	private static function check_consent( $consent_statement ) {
 		if ( $consent_statement !== self::$consent_statement ) {
 			throw new InvalidArgumentException( 'This method cannot be called without consenting the API may change.' );
 		}
@@ -70,13 +72,11 @@ class BlocksSharedState {
 	}
 
 	/**
-	 * Load store config (currency, locale, core data) into interactivity config.
+	 * Initialize the shared core config.
 	 *
-	 * @param string $consent_statement The consent statement string.
-	 * @return void
-	 * @throws InvalidArgumentException If consent statement doesn't match.
+	 * @param string $consent_statement - The consent statement string.
 	 */
-	public static function load_store_config( string $consent_statement ): void {
+	public function initialize_shared_config( $consent_statement ) {
 		self::check_consent( $consent_statement );
 
 		if ( self::$core_config_registered ) {
@@ -87,16 +87,16 @@ class BlocksSharedState {
 
 		wp_interactivity_config( self::$settings_namespace, self::get_currency_data() );
 		wp_interactivity_config( self::$settings_namespace, self::get_locale_data() );
+		wp_interactivity_config( self::$settings_namespace, self::get_core_data() );
 	}
 
 	/**
-	 * Load cart state into interactivity state.
+	 * Initialize interactivity state for cart that is needed by multiple blocks.
 	 *
-	 * @param string $consent_statement The consent statement string.
+	 * @param string $consent_statement - The consent statement string.
 	 * @return void
-	 * @throws InvalidArgumentException If consent statement doesn't match.
 	 */
-	public static function load_cart_state( string $consent_statement ): void {
+	public function register_cart_interactivity( $consent_statement ) {
 		self::check_consent( $consent_statement );
 
 		if ( null === self::$blocks_shared_cart_state ) {
@@ -126,15 +126,26 @@ class BlocksSharedState {
 	}
 
 	/**
+	 * Get core data to include in settings.
+	 *
+	 * @return array
+	 */
+	private static function get_core_data() {
+		return [
+			'isBlockTheme' => wp_is_block_theme(),
+		];
+	}
+
+	/**
 	 * Get currency data to include in settings.
 	 *
 	 * @return array
 	 */
-	private static function get_currency_data(): array {
+	private static function get_currency_data() {
 		$currency = get_woocommerce_currency();
 
-		return array(
-			'currency' => array(
+		return [
+			'currency' => [
 				'code'              => $currency,
 				'precision'         => wc_get_price_decimals(),
 				'symbol'            => html_entity_decode( get_woocommerce_currency_symbol( $currency ) ),
@@ -142,8 +153,8 @@ class BlocksSharedState {
 				'decimalSeparator'  => wc_get_price_decimal_separator(),
 				'thousandSeparator' => wc_get_price_thousand_separator(),
 				'priceFormat'       => html_entity_decode( get_woocommerce_price_format() ),
-			),
-		);
+			],
+		];
 	}
 
 	/**
@@ -151,64 +162,29 @@ class BlocksSharedState {
 	 *
 	 * @return array
 	 */
-	private static function get_locale_data(): array {
+	private static function get_locale_data() {
 		global $wp_locale;
 
-		return array(
-			'locale' => array(
+		return [
+			'locale' => [
 				'siteLocale'    => get_locale(),
 				'userLocale'    => get_user_locale(),
 				'weekdaysShort' => array_values( $wp_locale->weekday_abbrev ),
-			),
-		);
+			],
+		];
 	}
 
 	/**
-	 * Load placeholder image into interactivity config.
+	 * Add placeholder image.
 	 *
-	 * @param string $consent_statement The consent statement string.
-	 * @return void
-	 * @throws InvalidArgumentException If consent statement doesn't match.
+	 * @param string $consent_statement - The consent statement string.
 	 */
-	public static function load_placeholder_image( string $consent_statement ): void {
+	public function placeholder_image( $consent_statement ) {
 		self::check_consent( $consent_statement );
 
 		wp_interactivity_config(
 			self::$settings_namespace,
 			array( 'placeholderImgSrc' => wc_placeholder_img_src() )
 		);
-	}
-
-	/**
-	 * Get cart errors formatted as notices for the store-notices interactivity store.
-	 *
-	 * Returns errors from the hydrated cart state in the format expected by
-	 * the store-notices store context.
-	 *
-	 * @param string $consent_statement The consent statement string.
-	 * @return array Array of notices with id, notice, type, and dismissible keys.
-	 * @throws InvalidArgumentException If consent statement doesn't match.
-	 */
-	public static function get_cart_error_notices( string $consent_statement ): array {
-		self::check_consent( $consent_statement );
-
-		// Ensure cart state is loaded so this method works independently.
-		if ( null === self::$blocks_shared_cart_state ) {
-			self::load_cart_state( $consent_statement );
-		}
-
-		$errors  = self::$blocks_shared_cart_state['errors'] ?? array();
-		$notices = array();
-
-		foreach ( $errors as $error ) {
-			$notices[] = array(
-				'id'          => wp_unique_id( 'store-notice-' ),
-				'notice'      => $error['message'] ?? '',
-				'type'        => 'error',
-				'dismissible' => true,
-			);
-		}
-
-		return $notices;
 	}
 }

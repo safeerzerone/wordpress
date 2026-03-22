@@ -146,7 +146,6 @@ class Analytics {
 				'dashboard_chart_interval',
 				'dashboard_leaderboard_rows',
 				'order_attribution_install_banner_dismissed',
-				'scheduled_updates_promotion_notice_dismissed',
 			)
 		);
 	}

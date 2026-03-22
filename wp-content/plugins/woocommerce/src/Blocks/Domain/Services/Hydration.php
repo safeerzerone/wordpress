@@ -47,7 +47,7 @@ class Hydration {
 
 		// Allow-list only store API routes. No other request can be hydrated for safety.
 		$available_routes = StoreApi::container()->get( RoutesController::class )->get_all_routes( 'v1', true );
-		$route_match      = $this->match_route_to_handler( $path, $available_routes );
+		$controller_class = $this->match_route_to_handler( $path, $available_routes );
 
 		/**
 		 * We disable nonce check to support endpoints such as checkout. The caveat here is that we need to be careful to only support GET requests. No other request type should be processed without nonce check. Additionally, no GET request can modify data as part of hydration request, for example adding items to cart.
@@ -60,14 +60,9 @@ class Hydration {
 
 		$preloaded_data = array();
 
-		if ( null !== $route_match ) {
+		if ( null !== $controller_class ) {
 			try {
-				$response = $this->get_response_from_controller(
-					$route_match['controller'],
-					$path,
-					$route_match['url_params'],
-					$route_match['query_params']
-				);
+				$response = $this->get_response_from_controller( $controller_class, $path );
 				if ( $response ) {
 					$preloaded_data = array(
 						'body'    => $response->get_data(),
@@ -82,7 +77,7 @@ class Hydration {
 						'source'    => 'blocks-hydration',
 						'data'      => array(
 							'path'       => $path,
-							'controller' => $route_match['controller'] ?? null,
+							'controller' => $controller_class,
 						),
 						'backtrace' => true,
 					)
@@ -106,28 +101,15 @@ class Hydration {
 	 *
 	 * @param string $controller_class Controller class FQN that will respond to the request.
 	 * @param string $path             Request path regex.
-	 * @param array  $url_params       URL parameters extracted from route (e.g., ['id' => '123']).
-	 * @param array  $query_params     Query string parameters (e.g., ['key' => 'value']).
 	 *
 	 * @return false|mixed|null Response
 	 */
-	private function get_response_from_controller( $controller_class, $path, $url_params = array(), $query_params = array() ) {
+	private function get_response_from_controller( $controller_class, $path ) {
 		if ( null === $controller_class ) {
 			return false;
 		}
 
-		$request = new \WP_REST_Request( 'GET', $path );
-
-		// Set URL parameters (from route segments like /products/123).
-		if ( ! empty( $url_params ) ) {
-			$request->set_url_params( $url_params );
-		}
-
-		// Set query parameters (from query string like ?key=value).
-		if ( ! empty( $query_params ) ) {
-			$request->set_query_params( $query_params );
-		}
-
+		$request           = new \WP_REST_Request( 'GET', $path );
 		$schema_controller = StoreApi::container()->get( SchemaController::class );
 		$controller        = new $controller_class(
 			$schema_controller,
@@ -191,41 +173,23 @@ class Hydration {
 
 	/**
 	 * Inspired from WP core's `match_request_to_handler`, this matches a given path from available route regexes.
-	 * Extracts URL parameters from regex named groups and query string parameters.
+	 * However, unlike WP core, this does not check against query params, request method etc.
 	 *
-	 * @param string $path The path to match (may include query string).
+	 * @param string $path The path to match.
 	 * @param array  $available_routes Available routes in { $regex1 => $contoller_class1, ... } format.
 	 *
-	 * @return array|null Array with 'controller', 'url_params', and 'query_params' keys, or null if no match.
+	 * @return string|null
 	 */
 	private function match_route_to_handler( $path, $available_routes ) {
-		// Parse query string if present.
-		$query_params = array();
-		$parsed_url   = wp_parse_url( $path );
-		$clean_path   = $parsed_url['path'] ?? $path;
-
-		if ( isset( $parsed_url['query'] ) ) {
-			parse_str( $parsed_url['query'], $query_params );
-		}
-
-		// Match route and extract URL parameters.
+		$matched_route = null;
 		foreach ( $available_routes as $route_path => $controller ) {
-			if ( preg_match( '@^' . $route_path . '$@i', $clean_path, $matches ) ) {
-				// Extract named groups (URL parameters like 'id').
-				$url_params = array_intersect_key(
-					$matches,
-					array_flip( array_filter( array_keys( $matches ), 'is_string' ) )
-				);
-
-				return array(
-					'controller'   => $controller,
-					'url_params'   => $url_params,
-					'query_params' => $query_params,
-				);
+			$match = preg_match( '@^' . $route_path . '$@i', $path );
+			if ( $match ) {
+				$matched_route = $controller;
+				break;
 			}
 		}
-
-		return null;
+		return $matched_route;
 	}
 
 	/**

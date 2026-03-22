@@ -63,18 +63,15 @@ class RuntimeContainer {
 	 *
 	 * Note that this method throwing ContainerException implies that code fixes are needed, it's not an error condition that's recoverable at runtime.
 	 *
-	 * @template T of object
-	 * @param string $class_name Class name.
-	 * @phpstan-param class-string<T> $class_name
+	 * @param string $class_name The class name.
 	 *
-	 * @return T Object instance.
+	 * @return object The instance of the requested class.
 	 * @throws ContainerException Error when resolving the class to an object instance.
 	 * @throws \Exception Exception thrown in the constructor or in the 'init' method of one of the resolved classes.
 	 */
 	public function get( string $class_name ) {
 		$class_name    = trim( $class_name, '\\' );
 		$resolve_chain = array();
-		// @phpstan-ignore return.type (get_core uses reflection to instantiate the correct class type at runtime)
 		return $this->get_core( $class_name, $resolve_chain );
 	}
 

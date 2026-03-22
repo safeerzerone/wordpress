@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"checkJs": false,
+		"module": "commonjs",
+		"target": "es6",
+		"allowJs": true
+	},
+	"include": ["assets/js/*.js"],
+	"exclude": [
+		"node_modules",
+		"vendor",
+		"build",
+		"dist",
+		"**/*.min.js",
+		"**/jquery-tiptip/**",
+		"includes/**"
+	]
+}

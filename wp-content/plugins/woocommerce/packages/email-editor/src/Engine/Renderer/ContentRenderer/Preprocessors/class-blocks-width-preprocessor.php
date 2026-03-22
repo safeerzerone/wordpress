@@ -36,7 +36,6 @@ class Blocks_Width_Preprocessor implements Preprocessor {
 			// Currently we support only % and px units in case only the number is provided we assume it's %
 			// because editor saves percent values as a number.
 			$width_input = is_numeric( $width_input ) ? "$width_input%" : $width_input;
-			$width_input = is_string( $width_input ) ? $width_input : '100%';
 			$width       = $this->convert_width_to_pixels( $width_input, $layout_width );
 
 			if ( 'core/columns' === $block['blockName'] ) {

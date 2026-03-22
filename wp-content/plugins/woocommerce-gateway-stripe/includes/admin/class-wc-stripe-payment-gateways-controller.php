@@ -27,11 +27,6 @@ class WC_Stripe_Payment_Gateways_Controller {
 		}
 	}
 
-	/**
-	 * Register payment gateway scripts.
-	 *
-	 * @return void
-	 */
 	public function register_payments_scripts() {
 		$payment_gateways_script_asset_path = WC_STRIPE_PLUGIN_PATH . '/build/payment-gateways.asset.php';
 		$payment_gateways_script_asset      = file_exists( $payment_gateways_script_asset_path )
@@ -60,11 +55,6 @@ class WC_Stripe_Payment_Gateways_Controller {
 		);
 	}
 
-	/**
-	 * Enqueue payment gateway scripts on the payment methods page.
-	 *
-	 * @return void
-	 */
 	public function enqueue_payments_scripts() {
 		global $current_tab, $current_section;
 
@@ -85,8 +75,6 @@ class WC_Stripe_Payment_Gateways_Controller {
 	/**
 	 * Adds a container to the "payment gateways" page.
 	 * This is where the "Are you sure you want to disable Stripe?" confirmation dialog is rendered.
-	 *
-	 * @return void
 	 */
 	public function wc_stripe_gateway_container() {
 		?><div id="wc-stripe-payment-gateways-container" />

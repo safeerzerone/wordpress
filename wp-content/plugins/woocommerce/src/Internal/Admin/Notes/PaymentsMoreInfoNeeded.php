@@ -63,12 +63,10 @@ class PaymentsMoreInfoNeeded {
 		if ( ! self::should_display_note() ) {
 			return;
 		}
-		/* translators: %s: Payment provider name. */
-		$content = sprintf( __( 'We recently asked you if you wanted more information about %s. Run your business and manage your payments in one place with the solution built and supported by WooCommerce.', 'woocommerce' ), 'WooPayments' );
+		$content = __( 'We recently asked you if you wanted more information about WooPayments. Run your business and manage your payments in one place with the solution built and supported by WooCommerce.', 'woocommerce' );
 
 		$note = new Note();
-		/* translators: %s: Payment provider name. */
-		$note->set_title( sprintf( __( 'Payments made simple with %s', 'woocommerce' ), 'WooPayments' ) );
+		$note->set_title( __( 'Payments made simple with WooPayments', 'woocommerce' ) );
 		$note->set_content( $content );
 		$note->set_content_data( (object) array() );
 		$note->set_type( Note::E_WC_ADMIN_NOTE_INFORMATIONAL );

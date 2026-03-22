@@ -6,7 +6,6 @@ use Automattic\Jetpack\Connection\Manager;
 use Automattic\WooCommerce\Admin\Features\Features;
 use Automattic\WooCommerce\Admin\Features\OnboardingTasks\Task;
 use Automattic\WooCommerce\Admin\PluginsHelper;
-use Automattic\WooCommerce\Internal\Jetpack\JetpackConnection;
 
 /**
  * Shipping Task
@@ -90,7 +89,7 @@ class ExperimentalShippingRecommendation extends Task {
 	 * @return bool
 	 */
 	public static function has_jetpack_connected() {
-		$jetpack_connection_manager = JetpackConnection::get_manager();
+		$jetpack_connection_manager = new Manager( 'woocommerce' );
 
 		return $jetpack_connection_manager->is_connected() && $jetpack_connection_manager->has_connected_owner();
 	}

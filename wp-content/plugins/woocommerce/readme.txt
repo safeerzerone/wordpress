@@ -4,7 +4,7 @@ Tags: online store, ecommerce, shop, shopping cart, sell online
 Requires at least: 6.8
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 10.6.0
+Stable tag: 10.4.4
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -170,13 +170,18 @@ WooCommerce comes with some sample data you can use to see how products look; im
 
 == Changelog ==
 
-= 10.6.1 2026-03-12 =
+= 10.4.4 2026-02-24 =
+
+* Security - Fixed path validation in Store API batch endpoint
+
+= 10.4.3 2025-12-22 =
 
 **WooCommerce**
 
-* Fix - Add to Cart: fix validation of attributes with multi-word names [#63647](https://github.com/woocommerce/woocommerce/pull/63647)
-* Fix - Place newly installed payment gateways above offline payment methods instead of at the bottom of the list. [#63648](https://github.com/woocommerce/woocommerce/pull/63648)
-* Fix - Show shipping package title as "Shipment" instead of "Shipment 1" [#63649](https://github.com/woocommerce/woocommerce/pull/63649)
+* Fix - Ensure guest orders cannot be read by customers without providing the key and billing address. [#62557](https://github.com/woocommerce/woocommerce/pull/62557)
+* Fix - Fix undo button after cart item removal in the cart shortcode [#62529](https://github.com/woocommerce/woocommerce/pull/62529)
+* Fix - Improve handling of order modified date during HPOS sync on read to prevent infinite loops. [#62532](https://github.com/woocommerce/woocommerce/pull/62532)
+* Update - Add automatic currency transition from BGN to EUR for Bulgaria effective January 1, 2026 [#62478](https://github.com/woocommerce/woocommerce/pull/62478)
 
 
 [See changelog for all versions](https://raw.githubusercontent.com/woocommerce/woocommerce/trunk/changelog.txt).

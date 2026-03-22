@@ -180,12 +180,12 @@ class ProductQuery extends AbstractBlock {
 		$this->parsed_block = $parsed_block;
 
 		if ( self::is_woocommerce_variation( $parsed_block ) ) {
-			// Disable client-side navigation so that interactivity powered
-			// components fall back to full page reload.
+			// Indicate to interactivity powered components that this block is on the page
+			// and needs refresh to update data.
 			wp_interactivity_config(
-				'core/router',
+				'woocommerce',
 				[
-					'clientNavigationDisabled' => true,
+					'needsRefreshForInteractivityAPI' => true,
 				]
 			);
 			// Set this so that our product filters can detect if it's a PHP template.

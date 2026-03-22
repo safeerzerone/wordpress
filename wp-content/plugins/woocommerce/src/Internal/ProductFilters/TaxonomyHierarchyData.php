@@ -153,9 +153,6 @@ class TaxonomyHierarchyData {
 		$temp_parents  = array();
 		$temp_terms    = array();
 
-		// Prime term meta cache in single query to avoid N+1.
-		update_termmeta_cache( wp_list_pluck( $terms, 'term_id' ) );
-
 		foreach ( $terms as $term ) {
 			$term_id   = $term->term_id;
 			$parent_id = $term->parent;
@@ -168,15 +165,11 @@ class TaxonomyHierarchyData {
 
 			$temp_children[ $parent_id ][] = $term_id;
 
-			// Get the menu_order from term meta (WooCommerce stores category order in 'order' meta).
-			$menu_order = get_term_meta( $term_id, 'order', true );
-
 			$temp_terms[ $term_id ] = array(
-				'slug'       => $term->slug,
-				'name'       => $term->name,
-				'parent'     => $parent_id,
-				'term_id'    => $term->term_id,
-				'menu_order' => is_numeric( $menu_order ) ? (int) $menu_order : 0,
+				'slug'    => $term->slug,
+				'name'    => $term->name,
+				'parent'  => $parent_id,
+				'term_id' => $term->term_id,
 			);
 		}
 

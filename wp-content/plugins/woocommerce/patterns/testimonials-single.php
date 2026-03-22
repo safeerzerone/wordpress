@@ -1,6 +1,6 @@
 <?php
 /**
- * Title: Testimonial Single
+ * Title: Testimonials Single
  * Slug: woocommerce-blocks/testimonials-single
  * Categories: WooCommerce, Reviews
  */

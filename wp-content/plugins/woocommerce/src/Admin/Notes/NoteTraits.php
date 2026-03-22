@@ -39,15 +39,9 @@ trait NoteTraits {
 	/**
 	 * Check if the note has been previously added.
 	 *
-	 * @return bool
 	 * @throws NotesUnavailableException Throws exception when notes are unavailable.
 	 */
-	public static function note_exists(): bool {
-		/**
-		 * Data store instance.
-		 *
-		 * @var DataStore $data_store
-		 */
+	public static function note_exists() {
 		$data_store = Notes::load_data_store();
 		$note_ids   = $data_store->get_notes_with_name( self::NOTE_NAME );
 		return ! empty( $note_ids );
@@ -59,11 +53,11 @@ trait NoteTraits {
 	 * @return bool
 	 * @throws NotesUnavailableException Throws exception when notes are unavailable.
 	 */
-	public static function can_be_added(): bool {
+	public static function can_be_added() {
 		$note = self::get_note();
 
 		if ( ! $note instanceof Note && ! $note instanceof WC_Admin_Note ) {
-			return false;
+			return;
 		}
 
 		if ( self::note_exists() ) {
@@ -83,28 +77,24 @@ trait NoteTraits {
 	/**
 	 * Add the note if it passes predefined conditions.
 	 *
-	 * @return void
 	 * @throws NotesUnavailableException Throws exception when notes are unavailable.
 	 */
-	public static function possibly_add_note(): void {
+	public static function possibly_add_note() {
 		$note = self::get_note();
 
 		if ( ! self::can_be_added() ) {
 			return;
 		}
 
-		if ( $note instanceof Note || $note instanceof WC_Admin_Note ) {
-			$note->save();
-		}
+		$note->save();
 	}
 
 	/**
 	 * Alias this method for backwards compatibility.
 	 *
-	 * @return void
 	 * @throws NotesUnavailableException Throws exception when notes are unavailable.
 	 */
-	public static function add_note(): void {
+	public static function add_note() {
 		self::possibly_add_note();
 	}
 
@@ -117,24 +107,17 @@ trait NoteTraits {
 
 	/**
 	 * Delete this note if it is not applicable, unless has been soft-deleted or actioned already.
-	 *
-	 * @return void
 	 */
-	public static function delete_if_not_applicable(): void {
+	public static function delete_if_not_applicable() {
 		if ( ! self::is_applicable() ) {
-			/**
-			 * Data store instance.
-			 *
-			 * @var DataStore $data_store
-			 */
 			$data_store = Notes::load_data_store();
 			$note_ids   = $data_store->get_notes_with_name( self::NOTE_NAME );
 
 			if ( ! empty( $note_ids ) ) {
 				$note = Notes::get_note( $note_ids[0] );
 
-				if ( $note instanceof Note && ! $note->get_is_deleted() && ( Note::E_WC_ADMIN_NOTE_ACTIONED !== $note->get_status() ) ) {
-					self::possibly_delete_note();
+				if ( ! $note->get_is_deleted() && ( Note::E_WC_ADMIN_NOTE_ACTIONED !== $note->get_status() ) ) {
+					return self::possibly_delete_note();
 				}
 			}
 		}
@@ -145,22 +128,16 @@ trait NoteTraits {
 	 * is a hard delete, for where it doesn't make sense to soft delete or
 	 * action the note.
 	 *
-	 * @return void
 	 * @throws NotesUnavailableException Throws exception when notes are unavailable.
 	 */
-	public static function possibly_delete_note(): void {
-		/**
-		 * Data store instance.
-		 *
-		 * @var DataStore $data_store
-		 */
+	public static function possibly_delete_note() {
 		$data_store = Notes::load_data_store();
 		$note_ids   = $data_store->get_notes_with_name( self::NOTE_NAME );
 
 		foreach ( $note_ids as $note_id ) {
 			$note = Notes::get_note( $note_id );
 
-			if ( $note instanceof Note ) {
+			if ( $note ) {
 				$data_store->delete( $note );
 			}
 		}
@@ -170,21 +147,14 @@ trait NoteTraits {
 	/**
 	 * Update the note if it passes predefined conditions.
 	 *
-	 * @return void
 	 * @throws NotesUnavailableException Throws exception when notes are unavailable.
 	 */
-	public static function possibly_update_note(): void {
+	public static function possibly_update_note() {
 		$note_in_db = Notes::get_note_by_name( self::NOTE_NAME );
-		if ( ! $note_in_db instanceof Note ) {
+		if ( ! $note_in_db ) {
 			return;
 		}
 
-		// Backwards compatibility for checking if the note class has a get_note method.
-		/**
-		 * Backwards compatibility check.
-		 *
-		 * @phpstan-ignore-next-line
-		 */
 		if ( ! method_exists( self::class, 'get_note' ) ) {
 			return;
 		}
@@ -203,7 +173,7 @@ trait NoteTraits {
 				self::update_note_field_if_changed( $note_in_db, $note, 'type' ),
 				self::update_note_field_if_changed( $note_in_db, $note, 'locale' ),
 				self::update_note_field_if_changed( $note_in_db, $note, 'source' ),
-				self::update_note_field_if_changed( $note_in_db, $note, 'actions' ),
+				self::update_note_field_if_changed( $note_in_db, $note, 'actions' )
 			),
 			true
 		);
@@ -220,19 +190,14 @@ trait NoteTraits {
 	 * @return bool
 	 * @throws NotesUnavailableException Throws exception when notes are unavailable.
 	 */
-	public static function has_note_been_actioned(): bool {
-		/**
-		 * Data store instance.
-		 *
-		 * @var DataStore $data_store
-		 */
+	public static function has_note_been_actioned() {
 		$data_store = Notes::load_data_store();
 		$note_ids   = $data_store->get_notes_with_name( self::NOTE_NAME );
 
 		if ( ! empty( $note_ids ) ) {
 			$note = Notes::get_note( $note_ids[0] );
 
-			if ( $note instanceof Note && Note::E_WC_ADMIN_NOTE_ACTIONED === $note->get_status() ) {
+			if ( Note::E_WC_ADMIN_NOTE_ACTIONED === $note->get_status() ) {
 				return true;
 			}
 		}
@@ -240,65 +205,33 @@ trait NoteTraits {
 		return false;
 	}
 
-	/**
+/**
 	 * Update a note field of note1 if it's different from note2 with getter and setter.
 	 *
-	 * @param Note|WC_Admin_Note $note1 Note to update.
-	 * @param Note|WC_Admin_Note $note2 Note to compare against.
-	 * @param string             $field_name Field to update.
+	 * @param Note   $note1 Note to update.
+	 * @param Note   $note2 Note to compare against.
+	 * @param string $field_name Field to update.
 	 * @return bool True if the field was updated.
 	 */
-	private static function update_note_field_if_changed( $note1, $note2, string $field_name ): bool {
+	private static function update_note_field_if_changed( $note1, $note2, $field_name ) {
 		// We need to serialize the stdObject to compare it.
-		/**
-		 * Getter method for note1.
-		 *
-		 * @var callable $getter1
-		 */
-		$getter1 = array( $note1, 'get_' . $field_name );
-		/**
-		 * Getter method for note2.
-		 *
-		 * @var callable $getter2
-		 */
-		$getter2           = array( $note2, 'get_' . $field_name );
 		$note1_field_value = self::possibly_convert_object_to_array(
-			call_user_func( $getter1 )
+			call_user_func( array( $note1, 'get_' . $field_name ) )
 		);
 		$note2_field_value = self::possibly_convert_object_to_array(
-			call_user_func( $getter2 )
+			call_user_func( array( $note2, 'get_' . $field_name ) )
 		);
 
 		if ( 'actions' === $field_name ) {
 			// We need to individually compare the action fields because action object from db is different from action object of note.
 			// For example, action object from db has "id".
 			$diff        = array_udiff(
-				(array) $note1_field_value,
-				(array) $note2_field_value,
-				function ( $action1, $action2 ): int {
-					/**
-					 * First action object.
-					 *
-					 * @var object{name?: string, label?: string, query?: string} $action1
-					 */
-					/**
-					 * Second action object.
-					 *
-					 * @var object{name?: string, label?: string, query?: string} $action2
-					 */
-					if (
-						isset(
-							$action1->name,
-							$action2->name,
-							$action1->label,
-							$action2->label,
-							$action1->query,
-							$action2->query
-						) &&
-						$action1->name === $action2->name &&
+				$note1_field_value,
+				$note2_field_value,
+				function( $action1, $action2 ) {
+					if ( $action1->name === $action2->name &&
 						$action1->label === $action2->label &&
-						$action1->query === $action2->query
-					) {
+						$action1->query === $action2->query ) {
 						return 0;
 					}
 					return -1;
@@ -310,20 +243,11 @@ trait NoteTraits {
 		}
 
 		if ( $need_update ) {
-			/**
-			 * Getter method for note2 field.
-			 *
-			 * @var callable $getter2_again
-			 */
-			$getter2_again = array( $note2, 'get_' . $field_name );
-			/**
-			 * Setter method for note1 field.
-			 *
-			 * @var callable $setter1
-			 */
-			$setter1 = array( $note1, 'set_' . $field_name );
-			// Get note2 field again because it may have been changed during the comparison.
-			call_user_func( $setter1, call_user_func( $getter2_again ) );
+			call_user_func(
+				array( $note1, 'set_' . $field_name ),
+				// Get note2 field again because it may have been changed during the comparison.
+				call_user_func( array( $note2, 'get_' . $field_name ) )
+			);
 			return true;
 		}
 		return false;

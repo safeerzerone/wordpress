@@ -2,7 +2,9 @@
 namespace Automattic\WooCommerce\Blocks\Templates;
 
 use Automattic\WooCommerce\Blocks\Templates\SingleProductTemplateCompatibility;
+use Automattic\WooCommerce\Blocks\Utils\BlocksSharedState;
 use Automattic\WooCommerce\Blocks\Utils\BlockTemplateUtils;
+use Automattic\WooCommerce\Blocks\Utils\ProductDataUtils;
 
 /**
  * SingleProductTemplate class.
@@ -10,6 +12,7 @@ use Automattic\WooCommerce\Blocks\Utils\BlockTemplateUtils;
  * @internal
  */
 class SingleProductTemplate extends AbstractTemplate {
+	use BlocksSharedState;
 
 	/**
 	 * The slug of the template.

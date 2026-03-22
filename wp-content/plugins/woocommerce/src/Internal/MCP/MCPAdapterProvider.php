@@ -166,7 +166,7 @@ class MCPAdapterProvider {
 		// Filter abilities based on namespace and custom filter.
 		$mcp_abilities = array_filter(
 			$all_abilities_ids,
-			static function ( $ability_id ) {
+			function ( $ability_id ) {
 				// Include WooCommerce abilities by default.
 				$include = str_starts_with( $ability_id, 'woocommerce/' );
 
@@ -175,7 +175,6 @@ class MCPAdapterProvider {
 				 * Filter to override MCP ability inclusion decision.
 				 *
 				 * @since 10.3.0
-				 *
 				 * @param bool   $include    Whether to include the ability.
 				 * @param string $ability_id The ability ID.
 				 */
@@ -215,7 +214,7 @@ class MCPAdapterProvider {
 	 */
 	public static function is_mcp_request(): bool {
 		// Check if this is a REST request.
-		if ( ! wp_is_serving_rest_request() ) {
+		if ( ! defined( 'REST_REQUEST' ) || ! REST_REQUEST ) {
 			return false;
 		}
 

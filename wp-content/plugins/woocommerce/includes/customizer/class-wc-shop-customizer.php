@@ -946,6 +946,6 @@ class WC_Shop_Customizer {
 	 */
 	private function has_block_checkout() {
 		$post = get_post( get_option( 'woocommerce_checkout_page_id' ) );
-		return $post && strpos( $post->post_content, '<!-- wp:woocommerce/checkout' ) !== false;
+		return strpos( $post->post_content, '<!-- wp:woocommerce/checkout' ) !== false;
 	}
 }

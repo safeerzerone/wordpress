@@ -1,0 +1,135 @@
+{
+  "id": "wp-fusion",
+  "integration": {
+    "name": "WP Fusion",
+    "icon": "wp-fusion.svg",
+    "website_url": "https://wpfusion.com",
+    "docs_url": "https://wpfusion.com/documentation/lead-generation/sureforms/",
+    "category": "CRM & Marketing Automation",
+    "description": "Sync SureForms submissions with your connected CRM through WP Fusion."
+  },
+  "provider": "wordpress",
+  "plugin_detection": {
+    "class": "WP_Fusion"
+  },
+  "auth": {
+    "type": "plugin_detection",
+    "test_endpoint": {
+      "method": "plugin_check",
+      "success_criteria": {
+        "plugin_active": true
+      }
+    }
+  },
+  "actions": [
+    {
+      "name": "Sync Contact",
+      "description": "Create or update a contact in your CRM via WP Fusion.",
+      "provider": "wordpress",
+      "handler": {
+        "type": "action",
+        "action": "wp_fusion_sync_contact"
+      },
+      "fields": [
+        {
+          "key": "email_address",
+          "label": "Email Address",
+          "type": "email",
+          "required": true,
+          "placeholder": "Select the form field with the contact's email",
+          "description": "Used as the unique identifier when WP Fusion syncs the contact."
+        },
+        {
+          "key": "auto_login",
+          "label": "Auto Login",
+          "type": "toggle",
+          "required": false,
+          "default": false,
+          "description": "Start an auto-login session after form submission, allowing the visitor to access protected content without a user account."
+        }
+      ],
+      "apis": {
+        "crm_fields": {
+          "filter": "wp_fusion_get_crm_fields",
+          "response_type": "dynamic_fields",
+          "dependencies": []
+        }
+      }
+    },
+    {
+      "name": "Apply Tags",
+      "description": "Apply WP Fusion tags to the contact associated with this submission.",
+      "provider": "wordpress",
+      "handler": {
+        "type": "action",
+        "action": "wp_fusion_apply_tags"
+      },
+      "fields": [
+        {
+          "key": "email_address",
+          "label": "Email Address",
+          "type": "email",
+          "required": true,
+          "placeholder": "Select the form field with the contact's email",
+          "description": "Used as the unique identifier when WP Fusion syncs the contact."
+        },
+        {
+          "key": "tag_ids",
+          "label": "Tags",
+          "type": "multi-select-async",
+          "required": true,
+          "placeholder": "Select tags to apply",
+          "description": "Choose existing WP Fusion tags to be applied to the contact."
+        }
+      ],
+      "apis": {
+        "tags": {
+          "filter": "wp_fusion_get_tags",
+          "response_type": "select_options",
+          "target_fields": [
+            "tag_ids"
+          ],
+          "dependencies": []
+        }
+      }
+    },
+    {
+      "name": "Assign Lists",
+      "description": "Add the contact to CRM lists that are available in WP Fusion.",
+      "provider": "wordpress",
+      "handler": {
+        "type": "action",
+        "action": "wp_fusion_assign_lists"
+      },
+      "fields": [
+        {
+          "key": "email_address",
+          "label": "Email Address",
+          "type": "email",
+          "required": true,
+          "placeholder": "Select the form field with the contact's email",
+          "description": "Used as the unique identifier when WP Fusion syncs the contact."
+        },
+        {
+          "key": "list_ids",
+          "label": "Lists",
+          "type": "multi-select-async",
+          "required": true,
+          "placeholder": "Select lists",
+          "description": "Lists to assign the contact to when the workflow runs."
+        }
+      ],
+      "apis": {
+        "lists": {
+          "filter": "wp_fusion_get_lists",
+          "response_type": "select_options",
+          "target_fields": [
+            "list_ids"
+          ],
+          "dependencies": []
+        }
+      }
+    }
+  ]
+}
+

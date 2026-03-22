@@ -1,7 +1,7 @@
 <?php
 /**
  * Parameter-based Order querying
- * Args and usage: https://developer.woocommerce.com/docs/extensions/core-concepts/wc-get-orders/
+ * Args and usage: https://github.com/woocommerce/woocommerce/wiki/wc_get_orders-and-WC_Order_Query
  *
  * @package WooCommerce\Classes
  * @version 3.1.0

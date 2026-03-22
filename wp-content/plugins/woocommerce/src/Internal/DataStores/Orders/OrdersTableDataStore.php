@@ -1402,8 +1402,8 @@ WHERE
 
 			$this->init_order_record( $order, $order_id, $order_data );
 
-			if ( $cogs_is_enabled && $order->has_cogs() ) {
-				$this->read_cogs_data( $order, $order_data->meta_data );
+			if ( $order->has_cogs() && $cogs_is_enabled ) {
+				$this->read_cogs_data( $order );
 			}
 
 			if ( $data_sync_enabled && isset( $post_orders[ $order_id ] ) && $this->should_sync_order( $order ) ) {
@@ -1416,12 +1416,11 @@ WHERE
 	/**
 	 * Read the Cost of Goods Sold value for a given order from the database, if available, and apply it to the order.
 	 *
-	 * @param \WC_Abstract_Order                          $order     The order to get the COGS value for.
-	 * @param object{meta_key:string,meta_value:string}[] $meta_data The original meta-data fetched for the order.
+	 * @param \WC_Abstract_Order $order The order to get the COGS value for.
 	 */
-	private function read_cogs_data( WC_Abstract_Order $order, array $meta_data ) {
-		$meta_entry = array_filter( $meta_data, fn( object $meta ) => '_cogs_total_value' === $meta->meta_key );
-		$cogs_value = array() === $meta_entry ? 0 : (float) current( $meta_entry )->meta_value;
+	private function read_cogs_data( WC_Abstract_Order $order ) {
+		$meta_entry = $this->data_store_meta->get_metadata_by_key( $order, '_cogs_total_value' );
+		$cogs_value = false === $meta_entry ? 0 : (float) current( $meta_entry )->meta_value;
 
 		/**
 		 * Filter to customize the Cost of Goods Sold value that gets loaded for a given order.
@@ -1689,12 +1688,12 @@ WHERE
 			$new_diff      = ArrayUtil::deep_assoc_array_diff( $order1_values, $order2_values );
 			if ( ! empty( $new_diff ) && $sync ) {
 				if ( count( $order2_values ) > 1 ) {
-					$order1->delete_meta_data( $key );
+					$sync && $order1->delete_meta_data( $key );
 					foreach ( $order2_values as $post_order_value ) {
-						$order1->add_meta_data( $key, $post_order_value, false );
+						$sync && $order1->add_meta_data( $key, $post_order_value, false );
 					}
 				} else {
-					$order1->update_meta_data( $key, $order2_values[0] );
+					$sync && $order1->update_meta_data( $key, $order2_values[0] );
 				}
 				$diff[ $key ] = $new_diff;
 				unset( $order2_meta_by_key[ $key ] );
@@ -2569,7 +2568,6 @@ FROM $order_meta_table
 					$order_id
 				)
 			);
-			clean_post_cache( $order_id );
 		} else {
 			// phpcs:disable WordPress.DB.SlowDBQuery
 			$wpdb->insert(
@@ -3237,7 +3235,6 @@ CREATE TABLE $orders_table_name (
 	KEY status (status),
 	KEY date_created (date_created_gmt),
 	KEY customer_id_billing_email (customer_id, billing_email({$composite_customer_id_email_length})),
-	KEY customer_id_status (customer_id, status),
 	KEY billing_email (billing_email($max_index_length)),
 	KEY type_status_date (type, status, date_created_gmt),
 	KEY parent_order_id (parent_order_id),
@@ -3346,7 +3343,6 @@ CREATE TABLE $meta_table (
 					array( '%d', '%s', '%s' )
 				);
 				wp_cache_delete( $object->get_id(), 'post_meta' );
-				/** @var \WC_Logger_Interface $logger */ // phpcs:ignore Generic.Commenting.DocComment.MissingShort
 				$logger = wc_get_container()->get( LegacyProxy::class )->call_function( 'wc_get_logger' );
 				$logger->warning( sprintf( 'encountered an order meta value of type __PHP_Incomplete_Class during `delete_meta` in order with ID %d: "%s"', $object->get_id(), var_export( $meta_value, true ) ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export
 			} else {

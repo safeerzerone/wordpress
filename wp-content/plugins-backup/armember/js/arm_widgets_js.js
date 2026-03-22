@@ -1,0 +1,1 @@
+jQuery(document).ajaxComplete(function(e,t,i){var d,n,o={},a=i.data.split("&");for(d in a)n=a[d].split("="),o[decodeURIComponent(n[0])]=decodeURIComponent(n[1]);o.action&&"save-widget"===o.action&&(i=jQuery('input.widget-id[value="'+o["widget-id"]+'"]').parents(".widget"),-1===o["widget-id"].indexOf("arm_member_widget_drip_content")||t.responseText||wpWidgets.save(i,0,1,0))});

@@ -3,7 +3,6 @@ declare( strict_types = 1 );
 
 namespace Automattic\WooCommerce\Blocks;
 
-use Automattic\Jetpack\Constants;
 use Automattic\WooCommerce\Blocks\Assets\Api as AssetApi;
 use Automattic\WooCommerce\Admin\Features\Features;
 
@@ -262,12 +261,12 @@ final class AssetsController {
 			return null;
 		}
 
-		$cache = get_transient( 'woocommerce_block_asset_resource_hints' );
+		$cache = get_site_transient( 'woocommerce_block_asset_resource_hints' );
 
 		$current_version = array(
-			'woocommerce' => Constants::get_constant( 'WC_VERSION' ),
+			'woocommerce' => WOOCOMMERCE_VERSION,
 			'wordpress'   => get_bloginfo( 'version' ),
-			'site_url'    => site_url(),
+			'site_url'    => wp_guess_url(),
 		);
 
 		if ( isset( $cache['version'] ) && $cache['version'] === $current_version ) {
@@ -288,14 +287,14 @@ final class AssetsController {
 		$updated = array(
 			'files'   => $cache ?? array(),
 			'version' => array(
-				'woocommerce' => Constants::get_constant( 'WC_VERSION' ),
+				'woocommerce' => WOOCOMMERCE_VERSION,
 				'wordpress'   => get_bloginfo( 'version' ),
-				'site_url'    => site_url(),
+				'site_url'    => wp_guess_url(),
 			),
 		);
 
 		$updated['files'][ $filename ] = $data;
-		set_transient( 'woocommerce_block_asset_resource_hints', $updated, WEEK_IN_SECONDS );
+		set_site_transient( 'woocommerce_block_asset_resource_hints', $updated, WEEK_IN_SECONDS );
 	}
 
 	/**

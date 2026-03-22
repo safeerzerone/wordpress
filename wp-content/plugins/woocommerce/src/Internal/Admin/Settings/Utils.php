@@ -3,7 +3,7 @@ declare( strict_types=1 );
 
 namespace Automattic\WooCommerce\Internal\Admin\Settings;
 
-use Automattic\WooCommerce\Internal\Jetpack\JetpackConnection;
+use Automattic\WooCommerce\Admin\API\OnboardingPlugins;
 use WP_REST_Request;
 
 defined( 'ABSPATH' ) || exit;
@@ -443,7 +443,11 @@ class Utils {
 	 * }
 	 */
 	public static function get_wpcom_connection_authorization( string $return_url ): array {
-		$result = JetpackConnection::get_authorization_url( $return_url );
+		$plugin_onboarding = new OnboardingPlugins();
+
+		$request = new WP_REST_Request();
+		$request->set_param( 'redirect_url', $return_url );
+		$result = $plugin_onboarding->get_jetpack_authorization_url( $request );
 
 		if ( ! empty( $result['url'] ) ) {
 			$result['url'] = add_query_arg(

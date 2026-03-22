@@ -55,7 +55,9 @@ class Register {
 		add_action(
 			'before_woocommerce_init',
 			function() {
-				wc_get_container()->get( Synchronize::class )->init_hooks();
+				if ( get_option( Synchronize::SYNC_TASK_PAGE ) > 0 ) {
+					wc_get_container()->get( Synchronize::class )->init_hooks();
+				}
 			}
 		);
 	}

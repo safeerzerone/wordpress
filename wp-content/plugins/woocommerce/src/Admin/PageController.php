@@ -116,12 +116,8 @@ class PageController {
 		 */
 		$options = apply_filters( 'woocommerce_navigation_connect_page_options', $options );
 
-		// In the future, we should consider check for collision, but keep in mind that the current behavior is: the later call silently overwrites the earlier one.
-		$id = $options['id'] ?? null;
-
-		if ( is_string( $id ) && '' !== $id ) {
-			$this->pages[ $id ] = $options;
-		}
+		// @todo check for null ID, or collision.
+		$this->pages[ $options['id'] ] = $options;
 	}
 
 	/**
@@ -544,7 +540,6 @@ class PageController {
 	public function register_store_details_page() {
 		wc_admin_register_page(
 			array(
-				'id'     => 'setup-wizard',
 				'title'  => __( 'Setup Wizard', 'woocommerce' ),
 				'parent' => '',
 				'path'   => '/setup-wizard',

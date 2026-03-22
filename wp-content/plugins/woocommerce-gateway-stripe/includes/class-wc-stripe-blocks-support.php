@@ -7,6 +7,8 @@ defined( 'ABSPATH' ) || exit;
 
 /**
  * WC_Stripe_Blocks_Support class.
+ *
+ * @extends AbstractPaymentMethodType
  */
 final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 	/**
@@ -53,8 +55,6 @@ final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 
 	/**
 	 * Initializes the payment method type.
-	 *
-	 * @return void
 	 */
 	public function initialize() {
 		$this->settings = WC_Stripe_Helper::get_stripe_settings();
@@ -97,9 +97,9 @@ final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 		// Ensure Stripe JS is enqueued
 		wp_register_script(
 			'stripe',
-			'https://js.stripe.com/clover/stripe.js',
+			'https://js.stripe.com/v3/',
 			[],
-			null,
+			'3.0',
 			true
 		);
 
@@ -110,8 +110,6 @@ final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 
 	/**
 	 * Registers the UPE JS scripts.
-	 *
-	 * @return void
 	 */
 	private function register_upe_payment_method_script_handles() {
 		$asset_path   = WC_STRIPE_PLUGIN_PATH . '/build/upe-blocks.asset.php';
@@ -149,8 +147,6 @@ final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 
 	/**
 	 * Registers the classic JS scripts.
-	 *
-	 * @return void
 	 */
 	private function register_legacy_payment_method_script_handles() {
 		$asset_path   = WC_STRIPE_PLUGIN_PATH . '/build/index.asset.php';
@@ -338,8 +334,6 @@ final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 	 *
 	 * @param PaymentContext $context Holds context for the payment.
 	 * @param PaymentResult  $result  Result object for the payment.
-	 *
-	 * @return void
 	 */
 	public function add_payment_request_order_meta( PaymentContext $context, PaymentResult &$result ) {
 		$data = $context->payment_data;
@@ -380,6 +374,10 @@ final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 			}
 		}
 
+		if ( $is_upe && $is_using_saved_token ) {
+			$context->set_payment_data( array_merge( $data, [ 'wc-stripe-is-deferred-intent' => true ] ) );
+		}
+
 		// Hook into Stripe error processing so that we can capture the error to payment details.
 		// This error would have been registered via wc_add_notice() and thus is not helpful for block checkout processing.
 		add_action(
@@ -401,8 +399,6 @@ final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 	 *
 	 * @param PaymentContext $context Holds context for the payment.
 	 * @param PaymentResult  $result  Result object for the payment.
-	 *
-	 * @return void
 	 */
 	public function add_stripe_intents( PaymentContext $context, PaymentResult &$result ) {
 		if ( 'stripe' === $context->payment_method
@@ -438,10 +434,8 @@ final class WC_Stripe_Blocks_Support extends AbstractPaymentMethodType {
 	/**
 	 * Handles adding information about the payment request type used to the order meta.
 	 *
-	 * @param \WC_Order $order                The order being processed.
+	 * @param \WC_Order $order The order being processed.
 	 * @param string    $payment_request_type The payment request type used for payment.
-	 *
-	 * @return void
 	 */
 	private function add_order_meta( \WC_Order $order, $payment_request_type ) {
 		$payment_method_title = '';

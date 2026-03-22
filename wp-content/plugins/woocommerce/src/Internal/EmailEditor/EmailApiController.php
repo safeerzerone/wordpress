@@ -17,6 +17,12 @@ defined( 'ABSPATH' ) || exit;
  * @internal
  */
 class EmailApiController {
+	/**
+	 * A list of WooCommerce emails.
+	 *
+	 * @var \WC_Email[]
+	 */
+	private array $emails;
 
 	/**
 	 * The WooCommerce transactional email post manager.
@@ -31,6 +37,7 @@ class EmailApiController {
 	 * @internal
 	 */
 	final public function init(): void {
+		$this->emails       = WC()->mailer()->get_emails();
 		$this->post_manager = WCTransactionalEmailPostsManager::get_instance();
 	}
 
@@ -225,22 +232,13 @@ class EmailApiController {
 	}
 
 	/**
-	 * Get all WooCommerce emails.
-	 *
-	 * @return \WC_Email[]
-	 */
-	protected function get_emails(): array {
-		return WC()->mailer()->get_emails();
-	}
-
-	/**
 	 * Get the email object by ID.
 	 *
 	 * @param string $id - The email ID.
 	 * @return \WC_Email|null - The email object or null if not found.
 	 */
 	private function get_email_by_type( ?string $id ): ?WC_Email {
-		foreach ( $this->get_emails() as $email ) {
+		foreach ( $this->emails as $email ) {
 			if ( $email->id === $id ) {
 				return $email;
 			}

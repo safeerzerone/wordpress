@@ -33,6 +33,8 @@ class WC_Meta_Box_Order_Notes {
 		} else {
 			$notes = array();
 		}
+
+		include __DIR__ . '/views/html-order-notes.php';
 		?>
 		<div class="add_note">
 			<p>
@@ -49,6 +51,5 @@ class WC_Meta_Box_Order_Notes {
 			</p>
 		</div>
 		<?php
-		include __DIR__ . '/views/html-order-notes.php';
 	}
 }

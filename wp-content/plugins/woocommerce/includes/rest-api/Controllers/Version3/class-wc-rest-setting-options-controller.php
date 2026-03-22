@@ -82,8 +82,6 @@ class WC_REST_Setting_Options_Controller extends WC_REST_Setting_Options_V2_Cont
 			return new WP_Error( 'rest_setting_setting_group_invalid', __( 'Invalid setting group.', 'woocommerce' ), array( 'status' => 404 ) );
 		}
 
-		$this->prime_options_cache_for_settings( $settings );
-
 		$filtered_settings = array();
 		foreach ( $settings as $setting ) {
 			$option_key = $setting['option_key'];

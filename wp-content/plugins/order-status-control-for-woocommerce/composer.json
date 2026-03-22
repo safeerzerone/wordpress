@@ -1,0 +1,22 @@
+{
+    "name": "brightplugins/bv-order-status",
+    "description": "Auto Complete orders for virtual-downloadable products after successful payment or predefine status.",
+    "type": "woocommerce-plugin",
+    "require": {
+        "collizo4sky/persist-admin-notices-dismissal": "^1.4"
+    },
+    "license": "GPLv2",
+    "authors": [
+        {
+            "name": "brightplugins",
+            "email": "support@brightplugins.com"
+        }
+    ],
+    "autoload": {
+        "files": [],
+        "psr-4": {
+            "BP_Order_Control\\": "src/"
+        }
+    },
+    "minimum-stability": "dev"
+}

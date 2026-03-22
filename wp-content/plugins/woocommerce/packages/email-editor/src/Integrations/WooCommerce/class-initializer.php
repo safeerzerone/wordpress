@@ -30,7 +30,6 @@ class Initializer {
 		'woocommerce/product-price',
 		'woocommerce/product-button',
 		'woocommerce/product-sale-badge',
-		'woocommerce/coupon-code',
 	);
 
 	/**

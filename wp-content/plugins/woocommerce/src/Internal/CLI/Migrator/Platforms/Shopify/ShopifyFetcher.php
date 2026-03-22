@@ -84,7 +84,6 @@ class ShopifyFetcher implements PlatformFetcherInterface {
 								price
 								compareAtPrice
 								sku
-								taxable
 								inventoryPolicy
 								inventoryQuantity
 								position

@@ -26,20 +26,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 abstract class WC_Data {
 
 	/**
-	 * Clone mode constant: Duplicate mode clears meta IDs (default, for backward compatibility).
-	 *
-	 * @since 10.4.0
-	 */
-	const CLONE_MODE_DUPLICATE = 'duplicate';
-
-	/**
-	 * Clone mode constant: Cache mode preserves meta IDs.
-	 *
-	 * @since 10.4.0
-	 */
-	const CLONE_MODE_CACHE = 'cache';
-
-	/**
 	 * ID for this object.
 	 *
 	 * @since 3.0.0
@@ -118,17 +104,9 @@ abstract class WC_Data {
 	 * Stores additional meta data.
 	 *
 	 * @since 3.0.0
-	 * @var WC_Meta_Data[]|null
+	 * @var array
 	 */
 	protected $meta_data = null;
-
-	/**
-	 * Clone mode for controlling meta ID handling during clone operations.
-	 *
-	 * @since 10.4.0
-	 * @var string Either CLONE_MODE_DUPLICATE (default, clears meta IDs) or CLONE_MODE_CACHE (preserves meta IDs).
-	 */
-	protected $clone_mode = self::CLONE_MODE_DUPLICATE;
 
 	/**
 	 * List of properties that were earlier managed by data store. However, since DataStore is a not a stored entity in itself, they used to store data in metadata of the data object.
@@ -174,56 +152,20 @@ abstract class WC_Data {
 	}
 
 	/**
-	 * When the object is cloned, make sure meta is cloned correctly.
-	 *
-	 * Meta ID handling depends on the clone mode:
-	 * - CLONE_MODE_DUPLICATE (default): Forces reading of Meta and clears meta IDs for duplication (backward compatible).
-	 * - CLONE_MODE_CACHE: Preserves meta IDs for caching purposes.
+	 * When the object is cloned, make sure meta is duplicated correctly.
 	 *
 	 * @since 3.0.2
 	 */
 	public function __clone() {
-		if ( self::CLONE_MODE_DUPLICATE === $this->clone_mode ) {
-			$this->maybe_read_meta_data();
-		}
+		$this->maybe_read_meta_data();
 		if ( ! empty( $this->meta_data ) ) {
 			foreach ( $this->meta_data as $array_key => $meta ) {
 				$this->meta_data[ $array_key ] = clone $meta;
-
-				// Only clear meta IDs in duplicate mode (maintains backward compatibility).
-				if ( self::CLONE_MODE_DUPLICATE === $this->clone_mode && ! empty( $meta->id ) ) {
+				if ( ! empty( $meta->id ) ) {
 					$this->meta_data[ $array_key ]->id = null;
 				}
 			}
 		}
-	}
-
-	/**
-	 * Set the clone mode.
-	 *
-	 * This controls how meta IDs are handled when the object is cloned:
-	 * - CLONE_MODE_DUPLICATE (default): Clears meta IDs for duplication workflows
-	 * - CLONE_MODE_CACHE: Preserves meta IDs for caching workflows
-	 *
-	 * @since 10.4.0
-	 * @param string $mode One of the CLONE_MODE_* constants.
-	 * @throws InvalidArgumentException If an invalid mode is provided.
-	 */
-	public function set_clone_mode( $mode ) {
-		if ( ! in_array( $mode, array( self::CLONE_MODE_DUPLICATE, self::CLONE_MODE_CACHE ), true ) ) {
-			throw new InvalidArgumentException( 'Clone mode must be either WC_Data::CLONE_MODE_DUPLICATE or WC_Data::CLONE_MODE_CACHE' );
-		}
-		$this->clone_mode = $mode;
-	}
-
-	/**
-	 * Get the current clone mode.
-	 *
-	 * @since 10.4.0
-	 * @return string The current clone mode (one of the CLONE_MODE_* constants).
-	 */
-	public function get_clone_mode() {
-		return $this->clone_mode;
 	}
 
 	/**
@@ -421,6 +363,7 @@ abstract class WC_Data {
 			}
 		}
 
+		$this->maybe_read_meta_data();
 		$meta_data  = $this->get_meta_data();
 		$array_keys = array_keys( wp_list_pluck( $meta_data, 'key' ), $key, true );
 		$value      = $single ? '' : array();
@@ -449,6 +392,7 @@ abstract class WC_Data {
 	 * @return boolean
 	 */
 	public function meta_exists( $key = '' ) {
+		$this->maybe_read_meta_data();
 		$array_keys = wp_list_pluck( $this->get_meta_data(), 'key' );
 		return in_array( $key, $array_keys, true );
 	}

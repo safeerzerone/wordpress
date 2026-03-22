@@ -1,6 +1,6 @@
 <?php
 /**
- * Title: Three Columns with Images and Content
+ * Title: Three columns with images and content
  * Slug: woocommerce-blocks/three-columns-with-images-and-content
  * Categories: WooCommerce, Services
  */

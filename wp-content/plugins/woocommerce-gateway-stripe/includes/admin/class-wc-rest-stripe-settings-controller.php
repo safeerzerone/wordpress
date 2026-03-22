@@ -35,8 +35,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 
 	/**
 	 * Configure REST API routes.
-	 *
-	 * @return void
 	 */
 	public function register_routes() {
 		$form_fields = $this->gateway->get_form_fields();
@@ -152,7 +150,7 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 						'validate_callback' => 'rest_validate_request_arg',
 					],
 					'is_sepa_tokens_for_ideal' => [
-						'description'       => __( 'If "SEPA tokens for iDEAL | Wero" should be enabled.', 'woocommerce-gateway-stripe' ),
+						'description'       => __( 'If "SEPA tokens for iDEAL" should be enabled.', 'woocommerce-gateway-stripe' ),
 						'type'              => 'boolean',
 						'validate_callback' => 'rest_validate_request_arg',
 					],
@@ -271,8 +269,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Update settings.
 	 *
 	 * @param WP_REST_Request $request Full data about the request.
-	 *
-	 * @return WP_REST_Response
 	 */
 	public function update_settings( WP_REST_Request $request ) {
 		/* Settings > General */
@@ -366,8 +362,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates Stripe enabled status.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_stripe_enabled( WP_REST_Request $request ) {
 		$is_stripe_enabled = $request->get_param( 'is_stripe_enabled' );
@@ -387,8 +381,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates Stripe test mode.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_test_mode_enabled( WP_REST_Request $request ) {
 		$is_test_mode_enabled = $request->get_param( 'is_test_mode_enabled' );
@@ -404,8 +396,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates the "payment request" enable/disable settings.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_payment_request_enabled_for_legacy_checkout( WP_REST_Request $request ) {
 		$is_payment_request_enabled = $request->get_param( 'is_payment_request_enabled' );
@@ -421,8 +411,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates manual capture.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_manual_capture_enabled( WP_REST_Request $request ) {
 		$is_manual_capture_enabled = $request->get_param( 'is_manual_capture_enabled' );
@@ -438,8 +426,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates "saved cards" feature.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_saved_cards_enabled( WP_REST_Request $request ) {
 		$is_saved_cards_enabled = $request->get_param( 'is_saved_cards_enabled' );
@@ -455,8 +441,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates "SEPA tokens for other iDEAL" feature.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_sepa_tokens_for_ideal_enabled( WP_REST_Request $request ) {
 		$is_sepa_tokens_for_ideal_enabled = $request->get_param( 'is_sepa_tokens_for_ideal_enabled' );
@@ -472,8 +456,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates "SEPA tokens for Bancontact" feature.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_sepa_tokens_for_bancontact_enabled( WP_REST_Request $request ) {
 		$is_sepa_tokens_for_bancontact_enabled = $request->get_param( 'is_sepa_tokens_for_bancontact_enabled' );
@@ -486,11 +468,9 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	}
 
 	/**
-	 * Updates "separate card form" feature.
+	 * Updates "saved cards" feature.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_separate_card_form_enabled( WP_REST_Request $request ) {
 		$is_separate_card_form_enabled = $request->get_param( 'is_separate_card_form_enabled' );
@@ -506,8 +486,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates whether short account statement should be used.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_short_account_statement_enabled( WP_REST_Request $request ) {
 		$is_short_account_statement_enabled = $request->get_param( 'is_short_statement_descriptor_enabled' );
@@ -523,8 +501,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates whether debug logging is enabled.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_is_debug_log_enabled( WP_REST_Request $request ) {
 		$is_debug_log_enabled = $request->get_param( 'is_debug_log_enabled' );
@@ -540,8 +516,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates appearance attributes of the Amazon Pay button.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_amazon_pay_settings( WP_REST_Request $request ) {
 		$attributes = [
@@ -563,8 +537,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates appearance attributes of the payment request button.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_payment_request_settings( WP_REST_Request $request ) {
 		$attributes = [
@@ -588,8 +560,6 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates the "Optimized Checkout" settings.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 *
-	 * @return void
 	 */
 	private function update_oc_settings( WP_REST_Request $request ) {
 		$attributes = [
@@ -628,9 +598,7 @@ class WC_REST_Stripe_Settings_Controller extends WC_Stripe_REST_Base_Controller 
 	 * Updates the list of enabled payment methods.
 	 *
 	 * @param array $payment_method_ids_to_enable The list of payment method ids to enable.
-	 * @param bool  $is_upe_enabled               Whether UPE is enabled.
-	 *
-	 * @return void
+	 * @param bool $is_upe_enabled Whether UPE is enabled.
 	 */
 	private function update_enabled_payment_methods( $payment_method_ids_to_enable, $is_upe_enabled ) {
 		if ( null === $is_upe_enabled ) {

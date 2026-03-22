@@ -14,8 +14,7 @@ class ProductGalleryLargeImage extends AbstractBlock {
 	use EnableBlockJsonAssetsTrait;
 
 	/**
-	 * Block name. Block has been initially created as Large Image but has been renamed
-	 * to more generic name.
+	 * Block name.
 	 *
 	 * @var string
 	 */
@@ -158,7 +157,7 @@ class ProductGalleryLargeImage extends AbstractBlock {
 
 		$p->set_attribute( 'tabindex', '-1' );
 		$p->set_attribute( 'draggable', 'false' );
-		$p->set_attribute( 'data-wp-on--click', 'actions.onViewerClick' );
+		$p->set_attribute( 'data-wp-on--click', 'actions.onSelectedLargeImageClick' );
 		$p->set_attribute( 'data-wp-on--touchstart', 'actions.onTouchStart' );
 		$p->set_attribute( 'data-wp-on--touchmove', 'actions.onTouchMove' );
 		$p->set_attribute( 'data-wp-on--touchend', 'actions.onTouchEnd' );
@@ -205,7 +204,7 @@ class ProductGalleryLargeImage extends AbstractBlock {
 			<ul
 				class="wc-block-product-gallery-large-image__container"
 				data-wp-interactive="woocommerce/product-gallery"
-				data-wp-on--keydown="actions.onViewerImageKeyDown"
+				data-wp-on--keydown="actions.onSelectedLargeImageKeyDown"
 				aria-label="<?php esc_attr_e( 'Product gallery', 'woocommerce' ); ?>"
 				tabindex="0"
 				aria-roledescription="carousel"
@@ -243,7 +242,7 @@ class ProductGalleryLargeImage extends AbstractBlock {
 	}
 
 	/**
-	 * Viewer renders inner blocks manually so we need to skip default
+	 * Large Image renders inner blocks manually so we need to skip default
 	 * rendering routine for its inner blocks
 	 *
 	 * @param array $settings Array of determined settings for registering a block type.

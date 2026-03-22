@@ -38,27 +38,27 @@ class CartSelectShippingRate extends AbstractCartRoute {
 	 * @return array An array of endpoints.
 	 */
 	public function get_args() {
-		return array(
-			array(
+		return [
+			[
 				'methods'             => \WP_REST_Server::CREATABLE,
-				'callback'            => array( $this, 'get_response' ),
+				'callback'            => [ $this, 'get_response' ],
 				'permission_callback' => '__return_true',
-				'args'                => array(
+				'args'                => [
 					'package_id' => array(
 						'description' => __( 'The ID of the package being shipped. Leave blank to apply to all packages.', 'woocommerce' ),
-						'type'        => array( 'integer', 'string', 'null' ),
+						'type'        => [ 'integer', 'string', 'null' ],
 						'required'    => false,
 					),
-					'rate_id'    => array(
+					'rate_id'    => [
 						'description' => __( 'The chosen rate ID for the package.', 'woocommerce' ),
 						'type'        => 'string',
 						'required'    => true,
-					),
-				),
-			),
-			'schema'      => array( $this->schema, 'get_public_item_schema' ),
-			'allow_batch' => array( 'v1' => true ),
-		);
+					],
+				],
+			],
+			'schema'      => [ $this->schema, 'get_public_item_schema' ],
+			'allow_batch' => [ 'v1' => true ],
+		];
 	}
 
 	/**

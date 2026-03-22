@@ -1,6 +1,6 @@
 <?php
 /**
- * Title: Content Right with Image Left
+ * Title: Content right with image left
  * Slug: woocommerce-blocks/content-right-with-image-left
  * Categories: WooCommerce, About
  */

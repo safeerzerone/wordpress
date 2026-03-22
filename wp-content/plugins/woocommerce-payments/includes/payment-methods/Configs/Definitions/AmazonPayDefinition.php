@@ -7,8 +7,6 @@
 
 namespace WCPay\PaymentMethods\Configs\Definitions;
 
-use WCPay\Constants\Country_Code;
-use WCPay\Constants\Currency_Code;
 use WCPay\PaymentMethods\Configs\Interfaces\PaymentMethodDefinitionInterface;
 use WCPay\PaymentMethods\Configs\Constants\PaymentMethodCapability;
 use WCPay\PaymentMethods\Configs\Utils\PaymentMethodUtils;
@@ -57,18 +55,6 @@ class AmazonPayDefinition implements PaymentMethodDefinitionInterface {
 	}
 
 	/**
-	 * Get a dynamic title based on charge details from Stripe.
-	 *
-	 * @param string $account_country The merchant's account country.
-	 * @param array  $payment_details The payment method details from the Stripe charge.
-	 *
-	 * @return string|null The dynamic title, or null to use the default get_title().
-	 */
-	public static function get_title_from_charge_details( string $account_country, array $payment_details ): ?string {
-		return null;
-	}
-
-	/**
 	 * Get the title of the payment method for the settings page.
 	 *
 	 * @param string|null $account_country Optional. The merchant's account country.
@@ -95,27 +81,9 @@ class AmazonPayDefinition implements PaymentMethodDefinitionInterface {
 	 * @return string[] Array of currency codes
 	 */
 	public static function get_supported_currencies(): array {
-		$account         = \WC_Payments::get_account_service()->get_cached_account_data();
-		$account_country = isset( $account['country'] ) ? strtoupper( $account['country'] ) : '';
-
-		if ( Country_Code::UNITED_STATES === $account_country ) {
-			return [ Currency_Code::UNITED_STATES_DOLLAR ];
-		}
-
-		return [
-			Currency_Code::UNITED_STATES_DOLLAR,
-			Currency_Code::AUSTRALIAN_DOLLAR,
-			Currency_Code::POUND_STERLING,
-			Currency_Code::DANISH_KRONE,
-			Currency_Code::EURO,
-			Currency_Code::HONG_KONG_DOLLAR,
-			Currency_Code::JAPANESE_YEN,
-			Currency_Code::NEW_ZEALAND_DOLLAR,
-			Currency_Code::NORWEGIAN_KRONE,
-			Currency_Code::SWEDISH_KRONA,
-			Currency_Code::SWISS_FRANC,
-			Currency_Code::SOUTH_AFRICAN_RAND,
-		];
+		// Amazon Pay supports the same currencies as card payments.
+		// Return all available currencies.
+		return [];
 	}
 
 	/**
@@ -139,7 +107,6 @@ class AmazonPayDefinition implements PaymentMethodDefinitionInterface {
 			PaymentMethodCapability::MULTI_CURRENCY,
 			PaymentMethodCapability::TOKENIZATION,
 			PaymentMethodCapability::CAPTURE_LATER,
-			PaymentMethodCapability::EXPRESS_CHECKOUT,
 		];
 	}
 

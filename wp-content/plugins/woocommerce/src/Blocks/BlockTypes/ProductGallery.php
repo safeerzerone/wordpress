@@ -58,16 +58,18 @@ class ProductGallery extends AbstractBlock {
 				role="dialog"
 				aria-modal="true"
 				aria-label="Product Gallery">
-				<div class="wc-block-product-gallery-dialog__header">
+				<div class="wc-block-product-gallery-dialog__content">
 					<button class="wc-block-product-gallery-dialog__close-button" data-wp-on--click="actions.closeDialog" aria-label="<?php echo esc_attr__( 'Close dialog', 'woocommerce' ); ?>">
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
 							<path d="M13 11.8l6.1-6.3-1-1-6.1 6.2-6.1-6.2-1 1 6.1 6.3-6.5 6.7 1 1 6.5-6.6 6.5 6.6 1-1z"></path>
 						</svg>
 					</button>
-				</div>
-				<div class="wc-block-product-gallery-dialog__content">
-						<?php // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Output is already escaped by WooCommerce. ?>
-						<?php echo $images_html; ?>
+					<div class="wc-block-product-gallery-dialog__images-container">
+						<div class="wc-block-product-gallery-dialog__images">
+							<?php // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Output is already escaped by WooCommerce. ?>
+							<?php echo $images_html; ?>
+						</div>
+					</div>
 				</div>
 			</dialog>
 		<?php
@@ -155,15 +157,22 @@ class ProductGallery extends AbstractBlock {
 			);
 
 			if ( $product->is_type( ProductType::VARIABLE ) ) {
-				$variations_data           = $product->get_available_variations( 'objects' );
+				$variations_data           = $product->get_available_variations();
 				$formatted_variations_data = array();
 				$has_variation_images      = false;
 				foreach ( $variations_data as $variation ) {
-					$variation_image_id = (int) $variation->get_image_id();
-					if ( $variation_image_id ) {
+					if (
+						empty( $variation['variation_id'] )
+						|| ! array_key_exists( 'image_id', $variation )
+					) {
+						continue;
+					}
+
+					$variation_image_id = (int) $variation['image_id'];
+					if ( $variation_image_id && $variation_image_id !== (int) $product->get_image_id() ) {
 						$has_variation_images = true;
 
-						$formatted_variations_data[ $variation->get_id() ] = array(
+						$formatted_variations_data[ $variation['variation_id'] ] = array(
 							'image_id' => $variation_image_id,
 						);
 					}

@@ -20,8 +20,6 @@ class WC_Stripe_REST_UPE_Flag_Toggle_Controller extends WC_Stripe_REST_Base_Cont
 
 	/**
 	 * Configure REST API routes.
-	 *
-	 * @return void
 	 */
 	public function register_routes() {
 		register_rest_route(
@@ -72,8 +70,6 @@ class WC_Stripe_REST_UPE_Flag_Toggle_Controller extends WC_Stripe_REST_Base_Cont
 	 * @param WP_REST_Request $request Full data about the request.
 	 *
 	 * @deprecated 10.2.0 UPE is generally available and this endpoint will be removed in a future release.
-	 *
-	 * @return WP_REST_Response
 	 */
 	public function set_flag( WP_REST_Request $request ) {
 		// including the class again because otherwise it's not present.

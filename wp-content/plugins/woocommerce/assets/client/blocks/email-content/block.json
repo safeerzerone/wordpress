@@ -11,9 +11,6 @@
 	"attributes": {
 		"emailType": {
 			"type": "string"
-		},
-		"postId": {
-			"type": "integer"
 		}
 	},
 	"apiVersion": 3,

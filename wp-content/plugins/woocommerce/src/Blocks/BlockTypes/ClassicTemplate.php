@@ -50,12 +50,12 @@ class ClassicTemplate extends AbstractDynamicBlock {
 	protected function enqueue_data( array $attributes = array() ) {
 		parent::enqueue_data( $attributes );
 
-		// Disable client-side navigation so that interactivity powered
-		// components fall back to full page reload.
+		// Indicate to interactivity powered components that this block is on the page
+		// and needs refresh to update data.
 		wp_interactivity_config(
-			'core/router',
+			'woocommerce',
 			array(
-				'clientNavigationDisabled' => true,
+				'needsRefreshForInteractivityAPI' => true,
 			)
 		);
 	}
