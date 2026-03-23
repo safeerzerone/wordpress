@@ -2,6 +2,7 @@
 
 namespace PaymentPlugins\WooCommerce\PPCP;
 
+use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\AdvancedSettings;
 use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\APISettings;
 use PaymentPlugins\WooCommerce\PPCP\Assets\AssetDataApi;
 
@@ -9,7 +10,7 @@ use PaymentPlugins\WooCommerce\PPCP\Assets\AssetDataApi;
  * @property string $intent
  * @property string $vault
  * @property string $commit
- * @property array  $components
+ * @property array $components
  * @property string $currency
  * @property string $enableFunding;
  * @protected string $locale
@@ -21,9 +22,8 @@ class PayPalQueryParams {
 	private $params = [
 		'client-id'                   => 'sb',
 		'intent'                      => '',
-		'vault'                       => 'false',
 		'commit'                      => 'true',
-		'components'                  => [ 'buttons', 'messages' ],
+		'components'                  => [ 'buttons', 'messages', 'card-fields', 'googlepay', 'applepay' ],
 		'currency'                    => '',
 		'enable-funding'              => [ 'paylater' ],
 		'data-partner-attribution-id' => 'PaymentPlugins_PCP'
@@ -61,8 +61,8 @@ class PayPalQueryParams {
 
 	private function initialize() {
 		add_action( 'wc_ppcp_add_script_data', [ $this, 'add_script_data' ], 10 );
-		add_filter( 'wc_ppcp_cart_data', [ $this, 'add_cart_data' ], 10 );
-		add_filter( 'wc_ppcp_post_cart/refresh', [ $this, 'add_cart_data' ], 10 );
+		add_filter( 'wc_ppcp_update_order_review_data', [ $this, 'add_update_order_review_data' ], 10 );
+		add_filter( 'wc_ppcp_post_cart/refresh', [ $this, 'add_cart_refresh_data' ], 10 );
 	}
 
 	public function add_script_data() {
@@ -71,7 +71,15 @@ class PayPalQueryParams {
 		$this->asset_data->add( self::QUERY_PARAMS, $this->prepare_query_params() );
 	}
 
-	public function add_cart_data( $data ) {
+	public function add_update_order_review_data( $data ) {
+		$this->initialize_paypal_flow();
+		$this->initialize_query_params();
+		$data[ self::QUERY_PARAMS ] = $this->prepare_query_params();
+
+		return $data;
+	}
+
+	public function add_cart_refresh_data( $data ) {
 		$this->initialize_paypal_flow();
 		$this->initialize_query_params();
 		$data[ self::QUERY_PARAMS ] = $this->prepare_query_params();
@@ -85,8 +93,15 @@ class PayPalQueryParams {
 	 * @return mixed|string|void
 	 */
 	protected function initialize_paypal_flow() {
-		if ( $this->flow !== 'vault' ) {
-			$this->flow = apply_filters( 'wc_ppcp_get_paypal_flow', $this->flow, $this->context_handler );
+		/**
+		 * @var AdvancedSettings $advanced_settings
+		 */
+		$advanced_settings = wc_ppcp_get_container()->get( AdvancedSettings::class );
+
+		if ( ! $advanced_settings->is_vault_enabled() ) {
+			if ( $this->flow !== 'vault' ) {
+				$this->flow = apply_filters( 'wc_ppcp_get_paypal_flow', $this->flow, $this->context_handler );
+			}
 		}
 
 		return $this->flow;
@@ -106,13 +121,33 @@ class PayPalQueryParams {
 				$this->currency = $order->get_currency();
 			}
 		}
+		if ( $this->context_handler->is_checkout() || $this->context_handler->is_order_pay() ) {
+			$this->add_param( 'data-page-type', 'checkout' );
+		} elseif ( $this->context_handler->is_product() ) {
+			$this->add_param( 'data-page-type', 'product-details' );
+		} elseif ( $this->context_handler->is_cart() ) {
+			$this->add_param( 'data-page-type', 'cart' );
+		} elseif ( $this->context_handler->is_shop() ) {
+			$this->add_param( 'data-page-type', 'product-listing' );
+		}
 
-		if ( $this->flow == 'vault' ) {
-			$this->intent = 'tokenize';
-			$this->vault  = 'true';
+		/**
+		 * @var AdvancedSettings $advanced_settings
+		 */
+		$advanced_settings = wc_ppcp_get_container()->get( AdvancedSettings::class );
+
+		if ( ! $advanced_settings->is_vault_enabled() ) {
+			if ( $this->flow == 'vault' ) {
+				$this->intent = 'tokenize';
+				$this->vault  = 'true';
+			}
 		}
 
 		do_action( 'wc_ppcp_paypal_query_params', $this, $this->context_handler );
+	}
+
+	public function add_param( $key, $value ) {
+		$this->params[ $key ] = $value;
 	}
 
 	protected function prepare_query_params() {

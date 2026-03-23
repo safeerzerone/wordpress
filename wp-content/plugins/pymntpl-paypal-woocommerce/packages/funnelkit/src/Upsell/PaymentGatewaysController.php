@@ -2,9 +2,10 @@
 
 namespace PaymentPlugins\PPCP\FunnelKit\Upsell;
 
+use PaymentPlugins\PPCP\FunnelKit\Upsell\PaymentGateways\CreditCard;
 use PaymentPlugins\PPCP\FunnelKit\Upsell\PaymentGateways\PayPal;
+use PaymentPlugins\PPCP\FunnelKit\Upsell\PaymentGateways\ApplePay;
 use PaymentPlugins\WooCommerce\PPCP\Constants;
-use PaymentPlugins\WooCommerce\PPCP\Main;
 use PaymentPlugins\WooCommerce\PPCP\Rest\RestController;
 
 class PaymentGatewaysController {
@@ -13,14 +14,18 @@ class PaymentGatewaysController {
 
 	public function __construct( PaymentGatewaysRegistry $registry ) {
 		$this->registry = $registry;
-		add_action( 'init', [ $this->registry, 'initialize' ] );
 		add_filter( 'woocommerce_ppcp_funnelkit_gateways_registration', [ $this, 'register_gateways' ], 10, 2 );
 		add_filter( 'wfocu_wc_get_supported_gateways', [ $this, 'get_supported_gateways' ] );
 		add_filter( 'wfocu_subscriptions_get_supported_gateways', [ $this, 'get_subscription_gateways' ] );
 		add_filter( 'wfocu_gateways_paypal_support_non_reference_trans', [ $this, 'add_no_reference_txn_support' ] );
-		add_action( 'wfocu_footer_before_print_scripts', [ $this, 'enqueue_scripts' ] );
+
+		// deprecated - 2.0.12
+		//add_action( 'wfocu_footer_before_print_scripts', [ $this, 'enqueue_scripts' ] );
+
 		add_filter( 'wfocu_localized_data', [ $this, 'add_script_data' ] );
 		add_action( 'wfocu_subscription_created_for_upsell', [ $this, 'update_subscription_meta' ], 10, 3 );
+
+		$this->registry->initialize();
 	}
 
 	public function get_supported_gateways( $gateways ) {
@@ -33,7 +38,9 @@ class PaymentGatewaysController {
 
 	private function get_payment_gateways() {
 		return [
-			'ppcp' => 'PaymentPlugins\PPCP\FunnelKit\Upsell\PaymentGateways\PayPal'
+			'ppcp'          => 'PaymentPlugins\PPCP\FunnelKit\Upsell\PaymentGateways\PayPal',
+			'ppcp_card'     => 'PaymentPlugins\PPCP\FunnelKit\Upsell\PaymentGateways\CreditCard',
+			'ppcp_applepay' => 'PaymentPlugins\PPCP\FunnelKit\Upsell\PaymentGateways\ApplePay',
 		];
 	}
 
@@ -43,6 +50,8 @@ class PaymentGatewaysController {
 
 	public function register_gateways( PaymentGatewaysRegistry $registry, $container ) {
 		$registry->register( $container->get( PayPal::class ) );
+		$registry->register( $container->get( CreditCard::class ) );
+		$registry->register( $container->get( ApplePay::class ) );
 	}
 
 	private function get_payment_method_script_handles() {
@@ -56,7 +65,7 @@ class PaymentGatewaysController {
 
 	public function add_script_data( $data ) {
 		$settings               = [
-			'generalData' => Main::container()->get( RestController::class )->add_asset_data( [] )
+			'generalData' => wc_ppcp_get_container()->get( RestController::class )->add_asset_data( [] )
 		];
 		$data['wcPPCPSettings'] = $settings;
 
@@ -71,9 +80,10 @@ class PaymentGatewaysController {
 		if ( ! $order instanceof \WC_Order ) {
 			return;
 		}
-		$payment_method    = $order->get_payment_method();
-		$billing_agreement = $order->get_meta( Constants::BILLING_AGREEMENT_ID );
-		if ( ! $billing_agreement && $this->is_supported_gateway( $payment_method ) ) {
+		$payment_method       = $order->get_payment_method();
+		$billing_agreement    = $order->get_meta( Constants::BILLING_AGREEMENT_ID );
+		$payment_method_token = $order->get_meta( Constants::PAYMENT_METHOD_TOKEN );
+		if ( ( ! $payment_method_token && ! $billing_agreement ) && $this->is_supported_gateway( $payment_method ) ) {
 			global $wp_scripts;
 			$handles = $this->get_payment_method_script_handles();
 			$wp_scripts->do_items( $handles );
@@ -95,8 +105,7 @@ class PaymentGatewaysController {
 	 */
 	public function update_subscription_meta( $subscription, $product_hash, $order ) {
 		if ( $this->is_supported_gateway( $subscription->get_payment_method() ) ) {
-			$subscription->update_meta_data( Constants::BILLING_AGREEMENT_ID, $order->get_meta( Constants::BILLING_AGREEMENT_ID ) );
-			$subscription->update_meta_data( Constants::PAYER_ID, $order->get_meta( Constants::PAYER_ID ) );
+			$subscription->update_meta_data( Constants::PAYMENT_METHOD_TOKEN, $order->get_meta( Constants::PAYMENT_METHOD_TOKEN ) );
 			$subscription->save();
 		}
 	}

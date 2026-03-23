@@ -2,6 +2,7 @@
 
 namespace PaymentPlugins\PPCP\FunnelKit\Upsell\PaymentGateways;
 
+use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\AdvancedSettings;
 use PaymentPlugins\WooCommerce\PPCP\Constants;
 
 class PayPal extends AbstractGateway {
@@ -16,7 +17,10 @@ class PayPal extends AbstractGateway {
 	}
 
 	public function has_token( $order ) {
-		$token = $order->get_meta( Constants::BILLING_AGREEMENT_ID );
+		$token = $order->get_meta( Constants::PAYMENT_METHOD_TOKEN );
+		if ( empty( $token ) ) {
+			$token = $order->get_meta( Constants::BILLING_AGREEMENT_ID );
+		}
 
 		return ! empty( $token );
 	}
@@ -47,6 +51,10 @@ class PayPal extends AbstractGateway {
 		}
 
 		return false;
+	}
+
+	public function supports_payment_method_vaulting() {
+		return $this->is_reference_txn_enabled() || wc_ppcp_get_container()->get( AdvancedSettings::class )->is_vault_enabled();
 	}
 
 }

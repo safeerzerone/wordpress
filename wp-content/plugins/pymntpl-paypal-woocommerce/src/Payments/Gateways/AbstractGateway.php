@@ -3,8 +3,7 @@
 
 namespace PaymentPlugins\WooCommerce\PPCP\Payments\Gateways;
 
-
-use PaymentPlugins\WooCommerce\PPCP\Main;
+use PaymentPlugins\WooCommerce\PPCP\Customer;
 use PaymentPlugins\WooCommerce\PPCP\Assets\AssetsApi;
 use PaymentPlugins\WooCommerce\PPCP\Constants;
 use PaymentPlugins\WooCommerce\PPCP\Logger;
@@ -14,6 +13,8 @@ use PaymentPlugins\WooCommerce\PPCP\PluginIntegrationController;
 use PaymentPlugins\WooCommerce\PPCP\RefundsManager;
 use PaymentPlugins\WooCommerce\PPCP\TemplateLoader;
 use PaymentPlugins\WooCommerce\PPCP\Tokens\AbstractToken;
+use PaymentPlugins\WooCommerce\PPCP\Tokens\CreditCardToken;
+use PaymentPlugins\WooCommerce\PPCP\Traits\FeaturesTrait;
 use PaymentPlugins\WooCommerce\PPCP\Traits\Settings as SettingsTrait;
 use PaymentPlugins\WooCommerce\PPCP\Utilities\OrderLock;
 use PaymentPlugins\WooCommerce\PPCP\Utilities\PayPalFee;
@@ -26,6 +27,7 @@ use PaymentPlugins\WooCommerce\PPCP\Utilities\PayPalFee;
 abstract class AbstractGateway extends \WC_Payment_Gateway {
 
 	use SettingsTrait;
+	use FeaturesTrait;
 
 	/**
 	 * @var PaymentHandler
@@ -49,6 +51,7 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 
 	/**
 	 * @var PluginIntegrationController
+	 * @deprecated
 	 */
 	public $integration_controller;
 
@@ -57,6 +60,10 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 	protected $token_class;
 
 	protected $paypal_flow;
+
+	protected $payment_method_type;
+
+	private $save_payment_method = false;
 
 	public function __construct( $payment_handler, $logger, $assets, $template_loader ) {
 		$this->payment_handler = $payment_handler;
@@ -76,26 +83,6 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 	protected function init_hooks() {
 		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, [ $this, 'process_admin_options' ] );
 		add_filter( 'wc_ppcp_admin_nav_tabs', [ $this, 'add_navigation_tab' ] );
-	}
-
-	protected function init_supports() {
-		$this->supports = [
-			'tokenization',
-			'products',
-			'subscriptions',
-			'add_payment_method',
-			'subscription_cancellation',
-			'multiple_subscriptions',
-			'subscription_amount_changes',
-			'subscription_date_changes',
-			'default_credit_card_form',
-			'refunds',
-			'pre-orders',
-			'subscription_payment_method_change_admin',
-			'subscription_reactivation',
-			'subscription_suspension',
-			'subscription_payment_method_change_customer',
-		];
 	}
 
 	public function get_admin_script_dependencies() {
@@ -118,6 +105,10 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 		return [];
 	}
 
+	public function get_minicart_script_handles() {
+		return [];
+	}
+
 	/**
 	 * @param \PaymentPlugins\WooCommerce\PPCP\ContextHandler $context
 	 *
@@ -125,6 +116,9 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 	 */
 	public function get_payment_method_data( $context ) {
 		return [];
+	}
+
+	public function get_admin_script_data() {
 	}
 
 	public function add_section_enabled( $key ) {
@@ -137,6 +131,14 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 
 	public function is_section_enabled( $key ) {
 		return in_array( $key, $this->get_option( 'sections', [] ) );
+	}
+
+	/**
+	 * @return bool
+	 * @since 2.0.1
+	 */
+	public function is_checkout_section_enabled() {
+		return $this->is_section_enabled( 'checkout' );
 	}
 
 	public function is_cart_section_enabled() {
@@ -161,8 +163,11 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 			echo '<p>' . wp_kses_post( wptexturize( $description ) ) . '</p>';
 		}
 		printf( '<input type="hidden" id="%1$s" name="%1$s"/>', esc_attr( $this->id . '_paypal_order_id' ) );
+		printf( '<input type="hidden" id="%1$s" name="%1$s"/>', esc_attr( $this->id . '_payment_token' ) );
 		printf( '<input type="hidden" id="%1$s" name="%1$s"/>', esc_attr( $this->id . '_billing_token' ) );
+
 		$client = $this->payment_handler->client;
+
 		$this->template_loader->load_template( "checkout/{$this->template}", [
 			'gateway'   => $this,
 			'assets'    => $this->assets,
@@ -237,7 +242,7 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 				/**
 				 * @var \WC_Order_Refund $refund
 				 */
-				$refund = Main::container()->get( RefundsManager::class )->refund;
+				$refund = wc_ppcp_get_container()->get( RefundsManager::class )->refund;
 				if ( $refund ) {
 					$refund->update_meta_data( Constants::PAYPAL_REFUND, $result->id );
 				}
@@ -258,6 +263,69 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 		return true;
 	}
 
+	public function add_payment_method() {
+		$result = [
+			'result'   => 'success',
+			'redirect' => wc_get_account_endpoint_url( 'payment-methods' ),
+		];
+		try {
+			if ( ! is_user_logged_in() ) {
+				throw new \Exception( __( 'You must be logged in to add a payment method.', 'pymntpl-paypal-woocommerce' ) );
+			}
+			if ( ! $this->supports( 'vault' ) ) {
+				throw new \Exception( __( 'This payment method does not supports vaulting.', 'pymntpl-paypal-woocommerce' ) );
+			}
+
+			$payment_token_id = $this->get_payment_token_id_from_request();
+
+			if ( ! $payment_token_id ) {
+				throw new \Exception( __( 'A payment token ID is required when adding a payment method.', 'pymntpl-paypal-woocommerce' ) );
+			}
+
+			$user_id = get_current_user_id();
+
+			$customer = Customer::instance( $user_id );
+
+
+			$response = $this->payment_handler->client->paymentTokensV3->retrieve( $payment_token_id );
+
+			if ( is_wp_error( $response ) ) {
+				throw new \Exception( $response->get_error_message() );
+			}
+
+			/**
+			 * @param CreditCardToken $token
+			 */
+			$token = $this->get_payment_method_token_instance();
+			$token->initialize_from_payment_token( $response );
+			$token->set_customer_id( $response->getCustomer()->getId() );
+			$token->set_user_id( $user_id );
+			$token->save();
+
+			if ( ! $customer->has_id() ) {
+				$customer->set_id( $token->get_customer_id() );
+				$customer->save();
+			}
+		} catch ( \Exception $e ) {
+			\wc_add_notice( $e->getMessage(), 'error' );
+			$result['result']   = 'error';
+			$result['redirect'] = '';
+		}
+
+		return $result;
+	}
+
+	/**
+	 * @param AbstractToken $token
+	 *
+	 * @return string
+	 */
+	public function get_saved_payment_method_option_html( $token ) {
+		$token->set_format( $this->get_option( 'payment_format' ) );
+
+		return parent::get_saved_payment_method_option_html( $token );
+	}
+
 	/**
 	 * Render data that can change based on inputs provided by the user.
 	 *
@@ -274,8 +342,13 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 	 * @return AbstractToken
 	 */
 	public function get_payment_method_token_instance() {
+		/**
+		 * @param $token \WC_Payment_Token
+		 */
 		$token = new $this->token_class();
+		$token->set_gateway_id( $this->id );
 		$token->set_format( $this->get_option( 'payment_format' ) );
+		$token->set_environment( $this->payment_handler->client->getEnvironment() );
 
 		return $token;
 	}
@@ -290,6 +363,7 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 	}
 
 	public function get_transaction_url( $order ) {
+		//https://www.paypal.com/unifiedtransactions/details/payment/%s
 		$this->view_transaction_url = 'https://www.paypal.com/activity/payment/%s';
 		if ( $order->get_meta( Constants::PPCP_ENVIRONMENT ) === 'sandbox' ) {
 			$this->view_transaction_url = 'https://www.sandbox.paypal.com/activity/payment/%s';
@@ -300,6 +374,73 @@ abstract class AbstractGateway extends \WC_Payment_Gateway {
 
 	public function is_place_order_button() {
 		return true;
+	}
+
+	/**
+	 * @param \PaymentPlugins\PayPalSDK\Order $paypal_order
+	 * @param \WC_Order                       $order
+	 *
+	 * @return void
+	 */
+	public function validate_paypal_order( \PaymentPlugins\PayPalSDK\Order $paypal_order, \WC_Order $order ) {
+	}
+
+	/**
+	 * Returns true if the customer's payment method should be saved.
+	 *
+	 * @return bool
+	 */
+	public function should_save_payment_method() {
+		return $this->save_payment_method;
+	}
+
+	public function get_save_payment_method() {
+		return $this->get_save_payment_method();
+	}
+
+	public function set_save_payment_method( $bool ) {
+		$this->save_payment_method = $bool;
+	}
+
+	/**
+	 * Returns true if the payment method needs to be saved as part of this payment request. 3rd party code
+	 * can use the filter wc_ppcp_payment_method_save_required & wc_ppcp_checkout_payment_method_save_required
+	 * to trigger the saving of a payment method.
+	 * Example - WooCommerce Subscriptions needs the payment method to be saved during checkout.
+	 *
+	 * @param \WC_Order|null $order
+	 *
+	 * @return bool
+	 * @since 1.1.0
+	 */
+	public function is_payment_method_save_required( $order = null ) {
+		if ( $order instanceof \WC_Order ) {
+			return apply_filters( 'wc_ppcp_checkout_payment_method_save_required', $this->save_payment_method, $this, $order );
+		} else {
+			return apply_filters( 'wc_ppcp_payment_method_save_required', $this->save_payment_method, $this );
+		}
+	}
+
+	public function get_payment_method_type() {
+		return $this->payment_method_type;
+	}
+
+	public function add_payment_complete_note( \WC_Order $order, PaymentResult $result ) {
+		$order->add_order_note(
+			sprintf(
+				__( 'PayPal order %s created. %s', 'pymntpl-paypal-woocommerce' ),
+				$result->paypal_order->id,
+				$result->is_captured() ? sprintf( __( 'Capture ID: %s', 'pymntpl-paypal-woocommerce' ), $result->get_capture_id() ) : sprintf( __( 'Authorization ID: %s', 'pymntpl-paypal-woocommerce' ), $result->get_authorization_id() )
+			)
+		);
+	}
+
+	/**
+	 * @return false
+	 * @since 1.1.14
+	 */
+	public function is_immediate_payment_required() {
+		return false;
 	}
 
 }

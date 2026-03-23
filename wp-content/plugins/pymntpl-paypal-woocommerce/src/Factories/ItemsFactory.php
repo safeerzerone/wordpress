@@ -24,13 +24,17 @@ class ItemsFactory extends AbstractFactory {
 			 * the per unit price since PayPal does their own unit_price * quantity.
 			 */
 			if ( $incl_tax ) {
-				$total = ( $cart_item['line_subtotal'] + $cart_item['line_subtotal_tax'] ) / (int) $cart_item['quantity'];
+				$total = ( (float) $cart_item['line_subtotal'] + (float) $cart_item['line_subtotal_tax'] ) / (float) $cart_item['quantity'];
 			} else {
-				$total = $cart_item['line_subtotal'] / (int) $cart_item['quantity'];
+				$total = (float) $cart_item['line_subtotal'] / (float) $cart_item['quantity'];
+			}
+			if ( $total < 0 ) {
+				// if the total is negative then don't continue. This item will be added to the discount.
+				continue;
 			}
 			$qty  = $cart_item['quantity'];
 			$name = $cart_item['data']->get_name();
-			$items->add( $this->get_cart_item( abs( $total ), $name, $qty, $cart_item ) );
+			$items->add( $this->get_cart_item( $total, $name, $qty, $cart_item ) );
 		}
 		if ( 0 < $this->cart->get_fee_total() ) {
 			$fees = $this->cart->get_fees();
@@ -59,6 +63,16 @@ class ItemsFactory extends AbstractFactory {
 	public function from_order() {
 		$items = new Collection();
 		foreach ( $this->order->get_items() as $item ) {
+			/**
+			 * @var \WC_Order_Item_Product $item
+			 */
+			// only add items where the amount is greater than zero
+			if ( (float) $item->get_subtotal() < 0 ) {
+				continue;
+			}
+			/**
+			 * @var Item $item
+			 */
 			$item = $this->get_order_item( $item );
 			$items->add( $item );
 		}
@@ -89,6 +103,10 @@ class ItemsFactory extends AbstractFactory {
 			$item->setDescription( $this->get_product_description( $product ) );
 		}
 
+		/**
+		 * @param Item $item
+		 * @param array $cart_item
+		 */
 		return apply_filters( 'wc_ppcp_get_cart_item', $item, $cart_item );
 	}
 
@@ -168,7 +186,7 @@ class ItemsFactory extends AbstractFactory {
 
 	/**
 	 * @param                        $name
-	 * @param mixed                  $obj
+	 * @param mixed $obj
 	 *
 	 * @return string
 	 */
@@ -181,7 +199,13 @@ class ItemsFactory extends AbstractFactory {
 			}
 		}
 
-		return substr( $name, 0, 127 );
+		$name = substr( $name, 0, 127 );
+
+		if ( function_exists( 'mb_convert_encoding' ) ) {
+			$name = mb_convert_encoding( $name, 'UTF-8', 'UTF-8' );
+		}
+
+		return $name;
 	}
 
 }

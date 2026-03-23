@@ -61,4 +61,35 @@ abstract class AbstractRoute {
 		throw new \Exception( 'Method not implemented', 405 );
 	}
 
+	/**
+	 * @param $notice_type
+	 *
+	 * @return void
+	 * @since 1.0.54
+	 */
+	protected function get_wc_notice( $notice_type = '', $default = '' ) {
+		$notices = \wc_get_notices( $notice_type );
+		if ( \is_array( $notices ) && \count( $notices ) > 0 ) {
+			$notice = current( $notices );
+
+			return $notice['notice'] ?? $default;
+		}
+
+		return $default;
+	}
+
+	/**
+	 * @param $request
+	 *
+	 * @since 1.0.6
+	 */
+	protected function populate_post_data( $request ) {
+		/**
+		 * Some 3rd party plugins depend on the $_POST array being populated
+		 */
+		//phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$_POST    = array_merge( $_POST, $request->get_json_params() );
+		$_REQUEST = array_merge( $_REQUEST, $request->get_json_params() );
+	}
+
 }

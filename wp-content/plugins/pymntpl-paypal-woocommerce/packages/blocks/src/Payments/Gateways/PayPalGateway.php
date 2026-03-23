@@ -3,6 +3,9 @@
 
 namespace PaymentPlugins\PPCP\Blocks\Payments\Gateways;
 
+use PaymentPlugins\PPCP\Blocks\Utils\ActionUtils;
+use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\AdvancedSettings;
+
 /**
  * Class PayPalGateway
  *
@@ -13,9 +16,17 @@ class PayPalGateway extends AbstractGateway {
 	protected $name = 'ppcp';
 
 	public function get_payment_method_script_handles() {
-		$this->assets_api->register_script( 'wc-ppcp-blocks-commons', 'build/blocks-commons.js' );
-		$this->assets_api->register_script( 'wc-ppcp-blocks-paypal', 'build/paypal.js', [ 'wc-ppcp-blocks-commons' ] );
-		$this->assets_api->register_script( 'wc-ppcp-blocks-checkout', 'build/checkout-block.js', [ 'wc-ppcp-blocks-commons' ] );
+		/**
+		 * @var AdvancedSettings $advanced_settings
+		 */
+		$advanced_settings = wc_ppcp_get_container()->get( AdvancedSettings::class );
+		$vault_enabled     = \wc_string_to_bool( $advanced_settings->get_option( 'vault_enabled', 'yes' ) );
+
+		if ( $vault_enabled ) {
+			$this->assets_api->register_script( 'wc-ppcp-blocks-paypal', 'build/paypal.js' );
+		} else {
+			$this->assets_api->register_script( 'wc-ppcp-blocks-paypal', 'build/legacy/paypal.js' );
+		}
 
 		return [ 'wc-ppcp-blocks-paypal', 'wc-ppcp-blocks-checkout' ];
 	}
@@ -23,9 +34,10 @@ class PayPalGateway extends AbstractGateway {
 	public function get_payment_method_data() {
 		$sources = [ 'paypal', 'paylater', 'card', 'venmo' ];
 		$data    = [
-			'payLaterEnabled'         => wc_string_to_bool( $this->get_setting( 'paylater_enabled', 'no' ) ),
+			'paypalEnabled'           => $this->is_active(),
 			'cardEnabled'             => wc_string_to_bool( $this->get_setting( 'card_enabled', 'no' ) ),
 			'venmoEnabled'            => wc_string_to_bool( $this->get_setting( 'venmo_enabled', 'no' ) ),
+			'payLaterEnabled'         => wc_string_to_bool( $this->get_setting( 'paylater_enabled', 'no' ) ),
 			'paypalSections'          => $this->get_setting( 'sections', [] ),
 			'payLaterSections'        => $this->get_setting( 'paylater_sections', [] ),
 			'creditCardSections'      => $this->get_setting( 'credit_card_sections', [] ),
@@ -45,6 +57,16 @@ class PayPalGateway extends AbstractGateway {
 						'height' => (int) $this->get_setting( 'button_height' )
 					];
 				}
+				if ( $source === 'card' ) {
+					return [
+						'layout'  => 'vertical',
+						'label'   => $this->get_setting( 'button_label' ),
+						'shape'   => $this->get_setting( 'button_shape' ),
+						'height'  => (int) $this->get_setting( 'button_height' ),
+						'color'   => $this->get_setting( "{$source}_button_color" ),
+						'tagline' => wc_string_to_bool( $this->get_setting( 'card_tagline_enabled', 'no' ) )
+					];
+				}
 
 				return [
 					'layout' => 'vertical',
@@ -57,7 +79,8 @@ class PayPalGateway extends AbstractGateway {
 		];
 
 		if ( $this->is_redirect_with_order() ) {
-			$redirect_data = json_decode( base64_decode( rawurldecode( wc_clean( $_REQUEST['_ppcp_order_review'] ) ) ), true );
+			// phpcs:disable WordPress.Security.ValidatedSanitizedInput.InputNotValidated
+			$redirect_data = json_decode( base64_decode( rawurldecode( wc_clean( wp_unslash( $_REQUEST['_ppcp_order_review'] ) ) ) ), true );
 			if ( isset( $redirect_data['paypal_order'] ) ) {
 				$order = $this->client->orders->retrieve( $redirect_data['paypal_order'] );
 				if ( ! is_wp_error( $order ) ) {
@@ -73,14 +96,17 @@ class PayPalGateway extends AbstractGateway {
 			}
 		}
 
-		return array_merge( parent::get_payment_method_data(), $data );
+		return ActionUtils::apply_payment_data_filter(
+			array_merge( parent::get_payment_method_data(), $data ),
+			$this
+		);
 	}
 
 	public function get_payment_method_icons() {
 		return [
 			[
 				'id'  => 'paypal',
-				'src' => $this->assets_api->assets_url( '../../assets/img/paypal_logo.svg' ),
+				'src' => $this->assets_api->assets_url( "../../assets/img/{$this->get_setting('icon', 'paypal_logo')}.svg" ),
 				'alt' => 'PayPal'
 			],
 			[

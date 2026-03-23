@@ -1,10 +1,10 @@
 === Order Status Control for WooCommerce ===
-Contributors: brightvesseldev, niloybrightvessel 
-Tags: WooCommerce, order, complete, status control, autocomplete,virtual, paypal, stripe
+Contributors: brightvesseldev, kleinmannbrightvessel 
+Tags: order complete, status control, autocomplete,virtual
 Requires at least: 4.8
-Tested up to: 6.5.3
-Requires PHP: 7.2
-Stable Tag: 1.0.3
+Tested up to: 6.8.3
+Requires PHP: 7.4
+Stable Tag: 1.2
 License: GPLv2 or later
 
 Auto Complete orders for virtual-downloadable products after a successful payment or predefine status.
@@ -24,7 +24,11 @@ Auto Complete orders for virtual-downloadable products after a successful paymen
 
 Order Status Control option will be found under WooCommerce > Settings > General Tab
 
-## 🔥 WHAT’S NEXT ##
+## 🔥 ALL ACCESS MEMBERSHIP 🔥 ##
+
+Unlock all 19 premium WooCommerce plugins with one club membership. [__Join the Club »__](https://brightplugins.com/product/club-membership/?utm_source=wp_org&utm_medium=order-status-control&utm_campaign=upgrade_club_membership&utm_content=plugin-description)
+
+## WHAT’S NEXT ##
 
 **If you like this order status control plugin, then consider checking out our other free plugins:**
 
@@ -48,6 +52,18 @@ Order Status Control option will be found under WooCommerce > Settings > General
 == Screenshots ==
 
 == Changelog ==
+
+= 1.2 – 2 Dec 2025 =
+* Support for WooCommerce 10.3.x
+* Support for WordPress 6.8.x
+
+= 1.1 – 13 Aug 2025 =
+* Fixed: Notice: Function _load_textdomain_just_in_time was called incorrectly.
+
+= 1.0.4 - 3 Dec 24 =
+* Update: Composer dependencies 
+* [Compatibility] with WooCommerce 9.4.x
+* [Compatibility] with WordPress 6.7.x
 
 = 1.0.3 - 08 May 24 =
 * Update: Code Refactor

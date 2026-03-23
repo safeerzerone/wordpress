@@ -1,1 +1,1 @@
-<?php return array('dependencies' => array('jquery', 'wc-ppcp-smartbuttons', 'wp-polyfill'), 'version' => 'af1621c5632573e2770a');
+<?php return array('dependencies' => array('jquery', 'wc-ppcp-smartbuttons', 'wp-polyfill'), 'version' => 'd77c7ab19dffe7394d93');

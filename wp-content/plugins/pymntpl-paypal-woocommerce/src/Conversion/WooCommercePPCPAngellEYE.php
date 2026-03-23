@@ -19,7 +19,9 @@ class WooCommercePPCPAngellEYE extends GeneralPayPalPlugin {
 	 */
 	public function get_payment_source_from_order( $payment_source, $order ) {
 		if ( $payment_source->getToken() && $payment_source->getToken()->getId() ) {
-			$payment_source->getToken()->setType( Token::PAYMENT_METHOD_TOKEN );
+			if ( strpos( $payment_source->getToken()->getId(), 'B-' ) === false ) {
+				$payment_source->getToken()->setType( Token::PAYMENT_METHOD_TOKEN );
+			}
 		} else {
 			$payment_token_id = $order->get_meta( $this->payment_token_id );
 			if ( ! $payment_token_id ) {
@@ -53,7 +55,7 @@ class WooCommercePPCPAngellEYE extends GeneralPayPalPlugin {
 	}
 
 
-	private function get_customer_id( $user_id ) {
+	public function get_customer_id( $user_id ) {
 		if ( $user_id > 0 ) {
 			$key = 'angelleye_ppcp_paypal_customer_id';
 			if ( wc_ppcp_get_container()->get( APISettings::class )->is_sandbox() ) {

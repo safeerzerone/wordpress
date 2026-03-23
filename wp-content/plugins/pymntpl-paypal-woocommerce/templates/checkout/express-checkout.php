@@ -1,13 +1,13 @@
 <?php
 /**
- * @var WC_Payment_Gateway_Stripe[] $payment_methods
- * @var array                       $available_gateways
+ * @var \PaymentPlugins\WooCommerce\PPCP\Payments\Gateways\AbstractGateway[] $payment_methods
+ * @var array $available_gateways
  * @version 1.0.12
  *
  */
 
 ?>
-<div class="wc-ppcp-express-checkout" <?php if ( count( $available_gateways ) == 0 ){ ?>style="display: none"<?php } ?>>
+<div class="wc-ppcp-express-checkout" style="display:none;">
     <fieldset>
         <legend class="express-title"><?php esc_html_e( 'Express Checkout', 'pymntpl-paypal-woocommerce' ) ?></legend>
         <div class="wc_ppcp_express_checkout_gateways">

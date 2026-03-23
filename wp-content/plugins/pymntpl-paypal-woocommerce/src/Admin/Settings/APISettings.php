@@ -166,6 +166,28 @@ class APISettings extends AbstractSettings {
 				automatically, you can manually create it and enter the ID here.',
 					'pymntpl-paypal-woocommerce' )
 			],
+			'admin_mode'                => [
+				'title'       => __( 'Admin Only Mode', 'pymntpl-paypal-woocommerce' ),
+				'type'        => 'checkbox',
+				'default'     => 'no',
+				'value'       => 'yes',
+				'description' => __( 'When enabled, PayPal payment methods will only be visible to admin users with the manage_woocommerce permission. This allows admins to test PayPal on their live site without customers seeing it on the checkout page.', 'pymntpl-paypal-woocommerce' ),
+			],
+			/*'admin_gateways'            => [
+				'title'             => __( 'Admin Gateways', 'pymntpl-paypal-woocommerce' ),
+				'type'              => 'multiselect',
+				'class'             => 'wc-enhanced-select',
+				'default'           => [ 'ppcp', 'ppcp_card' ],
+				'options'           => [
+					'ppcp'      => __( 'PayPal', 'pymntpl-paypal-woocommerce' ),
+					'ppcp_card' => __( 'Credit/Debit Cards', 'pymntpl-paypal-woocommerce' )
+				],
+				'description'       => __( 'These are the payment gateways which are included in the Admin Only Mode. If a gateway is not included in this list it will be visible to customers on the frontend.', 'pymntpl-paypal-woocommerce' ),
+				'desc_tip'          => true,
+				'custom_attributes' => [
+					'data-show-if' => 'admin_mode=true'
+				],
+			],*/
 			'debug'                     => [
 				'title'       => __( 'Debug Enabled', 'pymntpl-paypal-woocommerce' ),
 				'type'        => 'checkbox',
@@ -221,7 +243,7 @@ class APISettings extends AbstractSettings {
 		/**
 		 * @var WPPayPalClient $client
 		 */
-		$client  = Main::container()->get( PayPalClient::class );
+		$client  = wc_ppcp_get_container()->get( PayPalClient::class );
 		$changed = false;
 		// Wasn't connected, but now is
 		foreach ( [ 'production', 'sandbox' ] as $env ) {
@@ -233,6 +255,11 @@ class APISettings extends AbstractSettings {
 		if ( $changed ) {
 			$this->init_form_fields();
 		}
+
+		/**
+		 * @since 1.1.1
+		 */
+		do_action( 'wc_ppcp_api_settings_saved', $this );
 	}
 
 	public function get_admin_script_dependencies() {
@@ -282,6 +309,10 @@ class APISettings extends AbstractSettings {
 		return $this->get_option( "client_id_{$environment}" );
 	}
 
+	public function get_access_token() {
+		return $this->get_option( "access_token_{$this->get_environment()}" );
+	}
+
 	public function is_connected( $environment = null ) {
 		if ( null === $environment ) {
 			$environment = $this->get_environment();
@@ -307,11 +338,21 @@ class APISettings extends AbstractSettings {
 		return \wc_string_to_bool( $this->get_option( 'debug_payment' ) );
 	}
 
+	/**
+	 * Return true if the admin only mode is enabled.
+	 *
+	 * @since 1.1.1
+	 * @return bool
+	 */
+	public function is_admin_only_mode() {
+		return \wc_string_to_bool( $this->get_option( 'admin_mode', 'no' ) );
+	}
+
 	private function generate_connect_link( $environment ) {
 		if ( ( $url = get_transient( 'wc_ppcp_connection_url_' . $environment ) ) ) {
 			return $url;
 		}
-		$client       = Main::container()->get( PayPalClient::class );
+		$client       = wc_ppcp_get_container()->get( PayPalClient::class );
 		$sellar_nonce = Utils::random_string();
 		$tracking_id  = Utils::random_string( 32 );
 		$args         = [
@@ -338,6 +379,7 @@ class APISettings extends AbstractSettings {
 										'PAYMENT',
 										'REFUND',
 										'VAULT',
+										'BILLING_AGREEMENT',
 										'TRACKING_SHIPMENT_READWRITE'
 									],
 									'seller_nonce' => $sellar_nonce
@@ -347,7 +389,11 @@ class APISettings extends AbstractSettings {
 					]
 				],
 				'products'                => [
-					'EXPRESS_CHECKOUT',
+					'PPCP',
+					'ADVANCED_VAULTING'
+				],
+				'capabilities'            => [
+					'PAYPAL_WALLET_VAULTING_ADVANCED'
 				],
 				'legal_consents'          => [
 					[
@@ -431,8 +477,8 @@ class APISettings extends AbstractSettings {
 		ob_start();
 		?>
         <tr valign="top">
-            <th scope="row" class="titledesc"><label
-                        for="<?php echo esc_attr( $field_key ); ?>"><?php echo wp_kses_post( $data['title'] ); ?><?php echo $this->get_tooltip_html( $data ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></label>
+            <th scope="row" class="titledesc">
+                <label for="<?php echo esc_attr( $field_key ); ?>"><?php echo wp_kses_post( $data['title'] ); ?><?php echo $this->get_tooltip_html( $data ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></label>
             </th>
             <td class="forminp">
                 <fieldset>

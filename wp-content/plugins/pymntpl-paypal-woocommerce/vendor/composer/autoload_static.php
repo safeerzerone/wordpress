@@ -12,8 +12,10 @@ class ComposerStaticInitd6aa985415b057d85bc5a1a99863499e
             'PaymentPlugins\\WooCommerce\\PPCP\\Tests\\' => 38,
             'PaymentPlugins\\WooCommerce\\PPCP\\' => 32,
             'PaymentPlugins\\PayPalSDK\\' => 25,
+            'PaymentPlugins\\PPCP\\WooCommerceSubscriptions\\' => 45,
             'PaymentPlugins\\PPCP\\WooCommerceShipStation\\' => 43,
             'PaymentPlugins\\PPCP\\WooCommerceProductAddons\\' => 45,
+            'PaymentPlugins\\PPCP\\WooCommercePreOrders\\' => 41,
             'PaymentPlugins\\PPCP\\WooCommerceGermanized\\' => 42,
             'PaymentPlugins\\PPCP\\WooCommerceExtraProductOptions\\' => 51,
             'PaymentPlugins\\PPCP\\Stripe\\' => 27,
@@ -39,6 +41,10 @@ class ComposerStaticInitd6aa985415b057d85bc5a1a99863499e
         array (
             0 => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src',
         ),
+        'PaymentPlugins\\PPCP\\WooCommerceSubscriptions\\' => 
+        array (
+            0 => __DIR__ . '/../..' . '/packages/woocommerce-subscriptions/src',
+        ),
         'PaymentPlugins\\PPCP\\WooCommerceShipStation\\' => 
         array (
             0 => __DIR__ . '/../..' . '/packages/woocommerce-shipstation/src',
@@ -46,6 +52,10 @@ class ComposerStaticInitd6aa985415b057d85bc5a1a99863499e
         'PaymentPlugins\\PPCP\\WooCommerceProductAddons\\' => 
         array (
             0 => __DIR__ . '/../..' . '/packages/woocommerce-product-addons/src',
+        ),
+        'PaymentPlugins\\PPCP\\WooCommercePreOrders\\' => 
+        array (
+            0 => __DIR__ . '/../..' . '/packages/woocommerce-preorders/src',
         ),
         'PaymentPlugins\\PPCP\\WooCommerceGermanized\\' => 
         array (
@@ -91,15 +101,19 @@ class ComposerStaticInitd6aa985415b057d85bc5a1a99863499e
         'PaymentPlugins\\PayPalSDK\\Address' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Address.php',
         'PaymentPlugins\\PayPalSDK\\AgreementDetails' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/AgreementDetails.php',
         'PaymentPlugins\\PayPalSDK\\Amount' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Amount.php',
+        'PaymentPlugins\\PayPalSDK\\AuthenticationResult' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/AuthenticationResult.php',
         'PaymentPlugins\\PayPalSDK\\Authorization' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Authorization.php',
         'PaymentPlugins\\PayPalSDK\\BillingAgreement' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/BillingAgreement.php',
         'PaymentPlugins\\PayPalSDK\\BillingAgreementToken' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/BillingAgreementToken.php',
+        'PaymentPlugins\\PayPalSDK\\BinDetails' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/BinDetails.php',
         'PaymentPlugins\\PayPalSDK\\Breakdown' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Breakdown.php',
         'PaymentPlugins\\PayPalSDK\\Capture' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Capture.php',
         'PaymentPlugins\\PayPalSDK\\Client\\AbstractClient' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Client/AbstractClient.php',
         'PaymentPlugins\\PayPalSDK\\Client\\BaseHttpClient' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Client/BaseHttpClient.php',
         'PaymentPlugins\\PayPalSDK\\Client\\ClientInterface' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Client/ClientInterface.php',
         'PaymentPlugins\\PayPalSDK\\Collection' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Collection.php',
+        'PaymentPlugins\\PayPalSDK\\CreditCard' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/CreditCard.php',
+        'PaymentPlugins\\PayPalSDK\\Customer' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Customer.php',
         'PaymentPlugins\\PayPalSDK\\Exception\\AccessTokenExpiredException' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Exception/AccessTokenExpiredException.php',
         'PaymentPlugins\\PayPalSDK\\Exception\\ApiException' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Exception/ApiException.php',
         'PaymentPlugins\\PayPalSDK\\Exception\\AuthenticationException' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Exception/AuthenticationException.php',
@@ -126,6 +140,7 @@ class ComposerStaticInitd6aa985415b057d85bc5a1a99863499e
         'PaymentPlugins\\PayPalSDK\\Payment' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Payment.php',
         'PaymentPlugins\\PayPalSDK\\PaymentMethod' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/PaymentMethod.php',
         'PaymentPlugins\\PayPalSDK\\PaymentSource' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/PaymentSource.php',
+        'PaymentPlugins\\PayPalSDK\\PaymentToken' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/PaymentToken.php',
         'PaymentPlugins\\PayPalSDK\\Payments' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Payments.php',
         'PaymentPlugins\\PayPalSDK\\Phone' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Phone.php',
         'PaymentPlugins\\PayPalSDK\\PhoneNumber' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/PhoneNumber.php',
@@ -149,11 +164,14 @@ class ComposerStaticInitd6aa985415b057d85bc5a1a99863499e
         'PaymentPlugins\\PayPalSDK\\Service\\PaymentService' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Service/PaymentService.php',
         'PaymentPlugins\\PayPalSDK\\Service\\PaymentTokenService' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Service/PaymentTokenService.php',
         'PaymentPlugins\\PayPalSDK\\Service\\PaymentTokenServiceV3' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Service/PaymentTokenServiceV3.php',
+        'PaymentPlugins\\PayPalSDK\\Service\\SetupTokenService' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Service/SetupTokenService.php',
         'PaymentPlugins\\PayPalSDK\\Service\\TrackingService' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Service/TrackingService.php',
         'PaymentPlugins\\PayPalSDK\\Service\\WebhookService' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Service/WebhookService.php',
+        'PaymentPlugins\\PayPalSDK\\SetupToken' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/SetupToken.php',
         'PaymentPlugins\\PayPalSDK\\Shipping' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Shipping.php',
         'PaymentPlugins\\PayPalSDK\\ShippingOption' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/ShippingOption.php',
         'PaymentPlugins\\PayPalSDK\\StatusDetails' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/StatusDetails.php',
+        'PaymentPlugins\\PayPalSDK\\ThreeDSecure' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/ThreeDSecure.php',
         'PaymentPlugins\\PayPalSDK\\Token' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Token.php',
         'PaymentPlugins\\PayPalSDK\\Utils' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/Utils.php',
         'PaymentPlugins\\PayPalSDK\\V1\\Address' => __DIR__ . '/..' . '/paymentplugins/paypal-php-sdk/src/V1/Address.php',

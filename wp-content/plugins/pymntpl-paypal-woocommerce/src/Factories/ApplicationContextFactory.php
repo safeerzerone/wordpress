@@ -3,7 +3,9 @@
 namespace PaymentPlugins\WooCommerce\PPCP\Factories;
 
 use PaymentPlugins\PayPalSDK\OrderApplicationContext;
+use PaymentPlugins\PayPalSDK\PaymentMethod;
 use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\AdvancedSettings;
+use PaymentPlugins\WooCommerce\PPCP\Utilities\LocaleUtil;
 
 class ApplicationContextFactory extends AbstractFactory {
 
@@ -34,16 +36,42 @@ class ApplicationContextFactory extends AbstractFactory {
 			$context->setReturnUrl( add_query_arg( [
 				'order_id'       => $this->order->get_id(),
 				'order_key'      => $this->order->get_order_key(),
-				'payment_method' => 'ppcp'
+				'payment_method' => $this->payment_method ? $this->payment_method->id : 'ppcp'
 			], WC()->api_request_url( 'ppcp_order_return' ) ) );
-			$context->setCancelUrl( wc_get_checkout_url() );
+			$context->setCancelUrl( add_query_arg( [
+				'ppcp_action' => 'canceled',
+				'order_id'    => $this->order->get_id(),
+			], wc_get_checkout_url() ) );
 		} else {
 			$context->setReturnUrl( add_query_arg( [
 				'_checkoutnonce' => wp_create_nonce( 'checkout-nonce' )
 			], WC()->api_request_url( 'ppcp_checkout_return' ) ) );
-			$context->setCancelUrl( wc_get_checkout_url() );
+			$context->setCancelUrl( add_query_arg( [
+				'ppcp_action' => 'canceled'
+			], wc_get_checkout_url() ) );
 		}
-		$context->setBrandName( $this->settings->get_option( 'display_name' ) );
+
+		// The display name must have length of 1 or greater
+		if ( $this->settings->get_option( 'display_name' ) ) {
+			$context->setBrandName( substr( $this->settings->get_option( 'display_name' ), 0, 127 ) );
+		}
+
+		if ( $this->settings->is_site_locale() ) {
+			$locale = LocaleUtil::get_site_locale( true );
+			if ( LocaleUtil::is_locale_supported( $locale, true ) ) {
+				$context->setLocale( $locale );
+			}
+		}
+
+		if ( $this->payment_method ) {
+			if ( $this->payment_method->is_immediate_payment_required() ) {
+				$context->setPaymentMethod(
+					( new PaymentMethod() )->setPayeePreferred(
+						PaymentMethod::IMMEDIATE_PAYMENT_REQUIRED
+					)
+				);
+			}
+		}
 
 		return $context;
 	}

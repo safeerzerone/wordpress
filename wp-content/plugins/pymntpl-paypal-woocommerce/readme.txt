@@ -2,9 +2,9 @@
 Contributors: mr.clayton
 Tags: paypal, paylater, venmo, credit cards
 Requires at least: 4.7
-Tested up to: 6.6
-Requires PHP: 7.1
-Stable tag: 1.0.52
+Tested up to: 6.9
+Requires PHP: 7.4
+Stable tag: 2.0.12
 Copyright: Payment Plugins
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -12,9 +12,15 @@ License URI: http://www.gnu.org/licenses/gpl-2.0.html
 == Description ==
 Developed exclusively between Payment Plugins and PayPal, PayPal for WooCommerce integrates with PayPal's newest API's.
 To boost conversion rates, you can offer PayPal, Pay Later, Venmo, or credit cards on your site. There are many supported features so
-merchants can tweak the plugin to suit their business needs.
+merchants can configure the plugin to suit their business needs.
+
+In order to process payments online, you will need a PayPal Business Account.
 
 = Supports =
+- Fastlane
+- Advanced Credit and Debit Card Payments (ACDC)
+- Apple Pay
+- Google Pay
 - WooCommerce Subscriptions
 - WooCommerce Pre-Orders
 - WooCommerce Blocks
@@ -36,15 +42,166 @@ merchants can tweak the plugin to suit their business needs.
 == Frequently Asked Questions ==
 = How do I test the plugin? =
 The plugin has a sandbox option, where you can test payments. Our documentation shows you how to setup a Sandbox account.
-[Documentation](https://docs.paymentplugins.com/wc-paypal/config/#/create_sandbox_account)
+[Documentation](https://paymentplugins.com/documentation/paypal/testing/create-sandbox-accounts)
 
 = How do I connect my PayPal account? =
-Our documentation has a step-by-step guide on how to connect the plugin to your PayPal account. [Documentation](https://docs.paymentplugins.com/wc-paypal/config/#/connect)
+Our documentation has a step-by-step guide on how to connect the plugin to your PayPal account. [Documentation](https://paymentplugins.com/documentation/paypal/getting-started/connect-account)
 
 = Who is Payment Plugins =
 Payment Plugins is the team behind several of the highest reviewed and installed Payment integrations for WooCommerce.
 
 == Changelog ==
+= 2.0.12 - 03/20/26 =
+* Updated - Improved handling of Apple Pay redacted postal code for “GB” and “CA” country codes when shipping zones contain wildcards. Example - NR34*, ME12*, etc
+* Updated - WooCommerce tested up to: 10.6
+* Fixed - Fastlane was not active on the checkout page in some scenarios due to a mismatched domain
+= 2.0.11 - 02/25/26 =
+* Added - New payment method format options for Apple Pay and Google Pay
+* Fixed - OR_BIBED_15 error triggered by Google Pay on Safari browser
+* Fixed - PHP exception in WebhookEventReceiver which could be triggered during webhook
+* Updated - Improved product add on integration when express payment methods enabled on the product page
+= 2.0.10 - 02/05/26 =
+* Updated - WooCommerce tested up to: 10.5
+* Updated - Account for exchange rate when adding the PayPal fee and net amount to the WooCommerce order during capture of authorized payment
+* Updated - Moved the OrderStatusController class into the PaymentPlugins\WooCommerce\PPCP\Orders namespace
+* Added - If an order is authorized, the transaction link will point to the authorization in the PayPal dashboard.
+* Added - Full list of shipping carriers supported by PayPal on the Add Tracking section.
+* Fixed - In some cases the incorrect payment_method ID was passed to the shipping calculation due to 3rd party plugins resulting in a notice that said the shop did not ship to the selected address.
+= 2.0.9 - 01/12/26 =
+* Fixed - Issue with WooCommerce Subscriptions and the PayPal gateway if the "Stripe Express Buttons" option is enabled. This bug was introduced in version 2.0.6. [https://wordpress.org/support/topic/issue-with-subscription-renewals/](https://wordpress.org/support/topic/issue-with-subscription-renewals/)
+= 2.0.8 - 01/08/26 =
+* Fixed - [https://wordpress.org/support/topic/funnelkit-upsells-on-credit-card-gateway-not-working-after-2-0-6/](https://wordpress.org/support/topic/funnelkit-upsells-on-credit-card-gateway-not-working-after-2-0-6/)
+* Added - Apple Pay and Google Pay support for Funnelkit's smart button express checkout section of checkout shortcode
+* Added - Apple Pay enabled/disabled option on Edit Product page. This way Apple Pay can be enabled/disabled per product like Google Pay and PayPal.
+= 2.0.7 - 12/30/25 =
+* Fixed - Javascript error in the Mondial Relay integration
+= 2.0.6 - 12/22/25 =
+* Updated - When registering support for WooCommerce Subscriptions, don't rely on a filter. Some 3rd party plugins initialize the WooCommerce Payment Gateways before the "woocommerce_init" function which
+is what we previously relied on to register support for WooCommerce Subscriptions. [https://wordpress.org/support/topic/serious-issue-with-woocommerce-subscriptions-after-update-to-2-0-5/](https://wordpress.org/support/topic/serious-issue-with-woocommerce-subscriptions-after-update-to-2-0-5/)
+= 2.0.5 - 12/19/25 =
+* Fixed - Express section on cart and checkout page was not showing if only PayPal enabled and using the legacy checkout
+* Added - Improved the domain association file setting description. It now explains that the domain registration must be completed manually and links to the setup guide.
+[https://wordpress.org/support/topic/apple-pay-validation-error-3/](https://wordpress.org/support/topic/apple-pay-validation-error-3/)
+* Added - Improved error message text when Apple Pay validation fails because domain registration has not been completed.
+* Added - When Google Pay payment is canceled on product page, make sure the item is removed from the cart. This is how Apple Pay and PayPal work.
+= 2.0.4 - 12/18/25 =
+* Added - Apple Pay integration
+* Added - Apple Pay support for Funnelkit Upsells
+* Added - Apple Pay upsell support for CheckoutWC
+* Added - Apple Pay support for WooCommerce Subscriptions
+= 2.0.3 - 12/05/25 =
+* Added - Upsell supports for new CheckoutWC feature
+* Added - Button height option for Google Pay
+* Updated - WordPress tested up to 6.9
+* Updated - Reduced payment processing time on checkout page
+= 2.0.2 - 11/22/25 =
+* Fixed - Button height slider was not working on PayPal Settings page for some sites
+* Fixed - Make sure re-ordering of PayPal buttons enables the Save button on PayPal Settings page
+* Fixed - PHP error triggered during subscription change payment method request
+* Updated - Placeholder buttons are now displayed in the PayPal Settings preview for ineligible buttons (e.g., PayLater with geolocation restrictions), enabling administrators to reorder all buttons regardless of eligibility status.
+[https://wordpress.org/support/topic/cannot-sort-pay-later-button/](https://wordpress.org/support/topic/cannot-sort-pay-later-button/)
+* Added - Additional debugging when processing a subscription renewal payment
+= 2.0.1 - 11/18/25 =
+* Added - Using the checkout shortcode, PayPal or Google Pay can be enabled in the express checkout section and/or the payment method section. For example, if you only want to offer Google Pay as an express checkout option
+you can now do that.
+* Updated - Verify that terms and conditions checkbox is visible before validating. Some shops have hidden terms and conditions checkboxes. [https://wordpress.org/support/topic/proceeding-cannot-be-finished-checkbox-missing/](https://wordpress.org/support/topic/proceeding-cannot-be-finished-checkbox-missing/)
+* Fixed - OR_BIBED_11 Google Pay error on cart and checkout block
+* Fixed - Resolved "Expected an order id to be passed" error on product page when legacy scripts are enabled.
+* Fixed - Validation message for Google Pay button was showing "Please click PayPal button before placing your order."
+* Fixed - PayPal card button not showing on checkout page when enabled.
+= 2.0.0 - 11/15/25 =
+* Added - Google Pay integration. Settings are located via the "PayPal Google Pay Settings" page. /wp-admin/admin.php?page=wc-settings&tab=checkout&section=ppcp_googlepay
+* Added - Option on WordPress Admin > Products page where product level PayPal options can be removed in bulk.
+* Updated - Modified templates/checkout/credit-card.php. wc-ppcp-card-payment-method__container" renamed to wc-ppcp_card-payment-method__container"
+* Updated - Javascript events like "foundVariation" converted to use camel case so "found_variation".
+* Updated - JS event wc_ppcp_button_created renamed to wc_ppcp_payment_element_ready.
+* Updated - Add validation for payment_method property in case invalid payment gateway ID is used. [https://wordpress.org/support/topic/fatal-errors-113/](https://wordpress.org/support/topic/fatal-errors-113/)
+* Updated - Improvements to Elementor widgets and overall support for Elementor.
+* Updated - Ensure order attribution data is captured when express payment buttons used on product and cart page.
+* Updated - Reduced average Javascript file size by 40% for improved load performance
+* Updated - Moved 3DS settings from Credit Card Settings page to Advanced Settings page.
+= 1.1.15 - 11/04/25 =
+* Updated - WooCommerce tested up to: 10.3
+* Updated - When express payment is made on product and cart page, ensure attribution data is included in the request.
+* Added - Action wc_ppcp_before_cart_payment_methods to the templates/cart/payment-methods.php file
+* Added - Action wc_ppcp_before_product_payment_methods to the templates/product/payment-methods.php file
+* Next Release - Support for Google Pay
+= 1.1.14 - 10/01/25 =
+* Added - [Immediate Payment Only](https://paymentplugins.com/documentation/paypal/paypal-settings/#immediate-payment-only) option which allows merchants to disable eChecks or any payment method that doesn't settle immediately.
+* Updated - WooCommerce tested up to: 10.2
+* Updated - Improved error handling when "Validate Checkout Fields" option is enabled. The "woocommerce-invalid" class is now added to invalid fields. [https://wordpress.org/support/topic/checkout-errors-scroll/](https://wordpress.org/support/topic/checkout-errors-scroll/)
+= 1.1.13 - 09/13/25 =
+* Fixed - Issue on cart and checkout block if "Vault" option was not enabled in the Advanced Settings page. This triggered a "rest_invalid_param" error for PayPal in express checkout.
+= 1.1.12 - 09/09/25 =
+* Updated - Improved how the plugin handles the PAYER_ACTION_REQUIRED status on PayPal orders.
+* Updated - If a product amount is negative, move that to the discount. Some plugins treat discounts as a product and PayPal's API doesn't allow negative product amounts. [https://wordpress.org/support/topic/not-compatible-with-the-wpc-product-bundles-for-woocommerce-plugin/](https://wordpress.org/support/topic/not-compatible-with-the-wpc-product-bundles-for-woocommerce-plugin/)
+* Updated - Improved compatability with Funnelkit upsell when payment is processed via redirect to PayPal payment page.
+= 1.1.11 - 08/28/25 =
+* Fixed - Incompatibility notice that was showing on block editor under certain conditions. The PayPal plugin has supported the cart and checkout block for several years.
+* Updated - On checkout block, show a loading mask when the Fastlane Checkout button is clicked.
+* Updated - Changed documentation url links so they point to the new documentation site: [PayPal Documentation](https://paymentplugins.com/documentation/paypal/)
+* Updated - WooCommerce tested up to: 10.1
+= 1.1.10 - 07/23/25 =
+* Fixed - On checkout block, don't show description UI for PayPal express checkout button
+* Updated - Changed how the validation logic works when "Validate Checkout Fields" is enabled. This change should make the plugin more
+compatible with a larger number of plugins that rely on core WooCommerce checkout validation and the action "woocommerce_after_checkout_validation".
+* Added - Merchants now have 3 options for the PayPal icon on the checkout page which renders next to the payment method title.
+= 1.1.9 - 07/18/29 =
+* Added - Option "Fastlane Icon Enabled" on the Credit Card Settings so merchants can turn on/off the Fastlane icon that renders below the email field on the checkout page.
+* Added - The Cardholder Name field can now be set to optional or required.
+* Added - Filter wc_ppcp_blocks_add_payment_method_data so data used by cart and checkout block can be customized
+* Updated - WooCommerce tested up to: 10.0
+= 1.1.8 - 07/04/25 =
+* Updated - Added check for existence of recipient name for shipping address on legacy billing agreements due to bug in PayPal's API. [https://wordpress.org/support/topic/error-for-the-paypal-subscription/](https://wordpress.org/support/topic/error-for-the-paypal-subscription/)
+* Added - Validation on checkout block if place order button is clicked before PayPal button
+= 1.1.7 - 06/11/25 =
+* Updated - Cast shipping rate cost to float to ensure there are no PHP operand errors with WooCommerce 9.3.3.
+= 1.1.6 - 06/09/25 =
+* Added - Order note when 3DS authentication fails. The note provides a human readable description for the admin.
+* Fixed - Javascript error on API Settings page which interfered with Connect process. [https://wordpress.org/support/topic/re-connect-with-paypal-not-possible/](https://wordpress.org/support/topic/re-connect-with-paypal-not-possible/)
+= 1.1.5 - 06/06/25 =
+* Added - Merchants can now configure 3DS settings to automatically accept or reject payments based on liability shift, enrollment status, and authentication results.
+* Added - Notice on the checkout page which displays if advanced card processing is unavailable.
+= 1.1.4 - 05/14/25 =
+* Updated - [https://wordpress.org/support/topic/refund-button-gone/](https://wordpress.org/support/topic/refund-button-gone/)
+* Updated - When Locale Setting is set to Site Language, explicitly set the locale on the application context
+* Fixed - When "Use place order button" enabled and billing agreement created, possible redirect loop
+= 1.1.3 - 05/09/25 =
+* Added - Credit Card gateway now supports FunnelKit Upsells. The FunnelKit team will be providing a necessary update in their next release which will make the Credit Card gateway available for upsells.
+* Fixed - Some merchants reported the PayPal button was unresponsive when a subscription product was in the cart. This was due to some 3rd party plugins loading gateways before the WooCommerce filter "woocommerce_payment_gateways" is triggered. This change ensures the gateways are setup regardless of load sequence.
+* Fixed - FunnelKit express checkout button issue resolved. Button was unresponsive if subscription product was in cart and an upsell funnel was triggered.
+* Updated - Made improvements to credit card UX when CVV field is invalid
+= 1.1.2 - 05/07/25 =
+* Fixed - Issue with new credit card gateway where declined cards where being treated as a successful payment.
+* Added - Compatibility between the cart and checkout block with the new Admin Only Mode option. This option allows admins to hide PayPal payment methods from customers so they can perform testing on a live site.
+* Updated - Only show saved payment method for the environment that's enabled. For example, if sandbox mode is enabled, only show sandbox payment methods.
+= 1.1.1 - 05/06/25 =
+* Added - Option to enable Admin Only Mode so that PayPal is only visible to admin users on the frontend. This allows admins to test PayPal in sandbox mode on live sites and customers won't see PayPal as a payment option.
+* Updated - Expire Fastlane client token if environment changed
+* Updated - Add function_exists check when using function wcs_is_manual_renewal_required. The function exists check must be used because there are subscription plugins that exist
+that are copies of the WooCommerce Subscriptions plugin, but those copies don't define all the same functions. [https://wordpress.org/support/topic/cart-page-fatal-error-since-version-1-1-0/](https://wordpress.org/support/topic/cart-page-fatal-error-since-version-1-1-0/)
+* Updated - Improved utf-8 checks for product names to prevent json_encode errors
+* Fixed - PayLater messaging not showing on product page. [https://wordpress.org/support/topic/paylater-messaging-no-longer-showing-after-latest-update/](https://wordpress.org/support/topic/paylater-messaging-no-longer-showing-after-latest-update/)
+* Fixed - Card save checkbox on pay for order page was not working
+* Fixed - Don't show the Fastlane signup link on Add Payment Method page
+= 1.1.0 - 05/03/25 =
+* Added - Advanced Credit and Debit Card Payments (ACDC) is now supported. Settings can be accessed via the PayPal Card Settings page within the PayPal plugin. If you encounter any permissions issues,
+we recommend reconnecting via the API Settings page to ensure all permissions are applied to the PayPal account connection.
+* Added - Fastlane By PayPal integration. It can be enabled on the new PayPal Card Settings page.
+* Added - Manual renewals now supported for WooCommerce Subscriptions
+* Added - The dispute created webhook is now optional and the order status assigned when a dispute is opened can be configured.
+= 1.0.55 - 02/11/24 =
+* Fixed - Tagline option not working for PayPal buttons on checkout block
+* Fixed - PayLater messaging not showing on checkout block
+* Added - action "wc_ppcp_cart_order_created". This action is triggered when a PayPal order is created by clicking the PayPal smartbutton.
+= 1.0.54 - 12/31/24 =
+* Added - Logging if the add to cart call fails on the product page
+* Added - Improved error message if add to cart fails on product page
+* Updated - Do not create a refund object if an authorized payment is voided. [https://wordpress.org/support/topic/marking-refunds-for-canceled-orders/](https://wordpress.org/support/topic/marking-refunds-for-canceled-orders/)
+= 1.0.53 - 11/02/24 =
+* Fixed - German translation of text "Below checkout button"
+* Updated - Cast cart quantities to float since some plugins modify cart quantity to support decimal values
+* Updated - Normalize province values to their two character abbreviation. Example: Salamanca = SA
 = 1.0.52 - 09/10/24 =
 * Added - If product variation is not in stock, disable the PayPal buttons on the product page.
 = 1.0.51 - 08/07/24 =

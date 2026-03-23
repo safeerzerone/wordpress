@@ -25,7 +25,9 @@ class Bootstrap {
 
 		// add_action( 'admin_init', [$this, 'dfwc_param_cehck'], 90 );
 		Order::init();
-		$this->define_vars();
+		add_action( 'init', function(){
+			$this->define_vars();
+		} );
 		add_action( 'admin_init', array( 'PAnD', 'init' ) );
 		add_action( 'admin_notices', array( $this, 'show_cosm_notice' ) );
 		add_action( 'woocommerce_general_settings', array( $this, 'addOrderControlSettings' ), 50 );

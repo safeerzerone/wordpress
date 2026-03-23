@@ -9,6 +9,8 @@ use PaymentPlugins\PayPalSDK\Item;
 use PaymentPlugins\PayPalSDK\Money;
 use PaymentPlugins\PayPalSDK\Order;
 use PaymentPlugins\PayPalSDK\OrderApplicationContext;
+use PaymentPlugins\PayPalSDK\PaymentSource;
+use PaymentPlugins\PayPalSDK\Token;
 use PaymentPlugins\PayPalSDK\PurchaseUnit;
 use PaymentPlugins\PayPalSDK\Refund;
 use PaymentPlugins\PayPalSDK\Shipping;
@@ -16,12 +18,12 @@ use PaymentPlugins\WooCommerce\PPCP\Assets\AssetsApi;
 use PaymentPlugins\WooCommerce\PPCP\Constants;
 use PaymentPlugins\WooCommerce\PPCP\Factories\CoreFactories;
 use PaymentPlugins\WooCommerce\PPCP\FeeCalculation;
-use PaymentPlugins\WooCommerce\PPCP\Main;
 use PaymentPlugins\WooCommerce\PPCP\PaymentHandler;
 use PaymentPlugins\WooCommerce\PPCP\PaymentResult;
 use PaymentPlugins\WooCommerce\PPCP\Utilities\NumberUtil;
 use PaymentPlugins\WooCommerce\PPCP\Utilities\OrderLock;
 use PaymentPlugins\WooCommerce\PPCP\Utilities\PayPalFee;
+use PaymentPlugins\WooCommerce\PPCP\Utils;
 
 class AbstractGateway extends \WFOCU_Gateway {
 
@@ -47,11 +49,15 @@ class AbstractGateway extends \WFOCU_Gateway {
 	}
 
 	public static function get_instance() {
-		return Main::container()->get( static::class );
+		return wc_ppcp_get_container()->get( static::class );
 	}
 
 	public function get_payment_method_script_handles() {
 		return [];
+	}
+
+	public function supports_payment_method_vaulting() {
+		return true;
 	}
 
 	public function process_charge( $order ) {
@@ -63,25 +69,41 @@ class AbstractGateway extends \WFOCU_Gateway {
 			if ( $this->is_processing_redirect() ) {
 				$paypal_order = $this->paypal_order;
 			} else {
-				$this->payment_handler->set_use_billing_agreement( true );
 				$paypal_order = $client->orders->create( $this->get_create_order_params( $order ) );
 				if ( is_wp_error( $paypal_order ) ) {
 					throw new \Exception( $paypal_order->get_error_message() );
 				}
 			}
-			if ( Order::CAPTURE == $paypal_order->intent ) {
-				OrderLock::set_order_lock( $order );
-				$response = $client->orders->capture( $paypal_order->id, $this->payment_handler->get_payment_source( $order ) );
-			} else {
-				$response = $client->orders->authorize( $paypal_order->id, $this->payment_handler->get_payment_source( $order ) );
+			if ( $paypal_order->isApproved() || $paypal_order->isCreated() ) {
+				if ( $paypal_order->getPaymentSource() ) {
+					if ( Order::CAPTURE == $paypal_order->intent ) {
+						OrderLock::set_order_lock( $order );
+						$paypal_order = $client->orders->capture( $paypal_order->id );
+					} else {
+						$paypal_order = $client->orders->authorize( $paypal_order->id );
+					}
+				}
 			}
-			$result = new PaymentResult( $response, $order, $payment_method );
+			$result = new PaymentResult( $paypal_order, $order, $payment_method );
 			if ( $result->success() ) {
 				WFOCU_Core()->data->set( '_transaction_id', $result->get_capture_id() );
 				$this->update_order_fee( $result, $order );
 
 				return $this->handle_result( true );
 			} else {
+				if ( $result->needs_approval() ) {
+					// Save the package to the order so that it's not lost during the redirect.
+					$package = WFOCU_Core()->data->get( '_upsell_package' );
+					$order->update_meta_data( '_upsell_package', $package );
+					$order->save();
+					$response = $result->get_approval_response();
+					\wp_send_json( [
+						'success' => true,
+						'data'    => [
+							'redirect_url' => $response['redirect']
+						]
+					] );
+				}
 				throw new \Exception( $result->get_error_message() );
 			}
 		} catch ( \Exception $e ) {
@@ -103,13 +125,55 @@ class AbstractGateway extends \WFOCU_Gateway {
 	 * @return \PaymentPlugins\PayPalSDK\Order
 	 */
 	public function get_create_order_params( $order ) {
+		/**
+		 * @var \PaymentPlugins\WooCommerce\PPCP\Payments\Gateways\AbstractGateway $payment_method
+		 */
+		$payment_method = wc_get_payment_gateway_by_order( $order );
 		$currency       = $order->get_currency();
 		$package        = WFOCU_Core()->data->get( '_upsell_package' );
-		$paypal_order   = $this->payment_handler->get_create_order_params( $order );
-		$current_offer  = WFOCU_Core()->data->get( 'current_offer' );
-		$item_total     = array_reduce( $package['products'], function ( $total, $product ) {
-			return $total + $product['price'];
-		}, 0 );
+
+		$package['total']    = (float) $package['total'];
+		$package['taxes']    = (float) $package['taxes'];
+		$package['shipping'] = (float) $package['shipping'];
+		/**
+		 * @var CoreFactories $factories
+		 */
+		$factories = wc_ppcp_get_container()->get( CoreFactories::class );
+		$factories->initialize( $order, $payment_method );
+
+		$current_offer = WFOCU_Core()->data->get( 'current_offer' );
+		list( $item_total, $needs_shipping ) = array_reduce( $package['products'], function ( $carry, $product ) {
+			$carry[0] = $carry[0] + $product['price'];
+			if ( isset( $product['data'] ) && $product['data']->needs_shipping() ) {
+				$carry[1] = true;
+			}
+
+			return $carry;
+		}, [ 0, false ] );
+
+		$application_context = $factories->applicationContext->get( $needs_shipping, true );
+		$application_context->setReturnUrl(
+			add_query_arg( [
+				'wfocu-si'  => WFOCU_Core()->data->get_transient_key(),
+				'order_id'  => $order->get_id(),
+				'order_key' => $order->get_order_key()
+			], WC()->api_request_url( 'wc_ppcp_funnelkit_return' )
+			)
+		);
+		$application_context->setCancelUrl(
+			add_query_arg( [
+				'wfocu-si' => WFOCU_Core()->data->get_transient_key()
+			], WFOCU_Core()->public->get_the_upsell_url( WFOCU_Core()->data->get_current_offer() ) ) );
+
+		if ( ! $this->has_token( $order ) ) {
+			$application_context->setUserAction( OrderApplicationContext::PAY_NOW );
+		}
+
+		$result = ( new Order() )
+			->setIntent( $payment_method->get_option( 'intent' ) )
+			->setPayer( $factories->payer->from_order() )
+			->setApplicationContext( $application_context );
+
 		$purchase_units = new Collection();
 		$purchase_unit  = ( new PurchaseUnit() )
 			->setAmount( ( new Amount() )
@@ -142,20 +206,32 @@ class AbstractGateway extends \WFOCU_Gateway {
 			->setInvoiceId( sprintf( '%s-%s', $order->get_id(), $current_offer ? $current_offer : 'wfocu' ) )
 			->setCustomId( sprintf( '%1$s_%2$s', 'wfocu', $order->get_id() ) );
 
-		if ( \in_array( $paypal_order->getApplicationContext()->getShippingPreference(), [ OrderApplicationContext::GET_FROM_FILE, OrderApplicationContext::SET_PROVIDED_ADDRESS ] ) ) {
-			$purchase_unit->setShipping( ( new Shipping() )
-				->setName( $paypal_order->getPurchaseUnits()->get( 0 )->getShipping()->getName() )
-				->setAddress( $paypal_order->getPurchaseUnits()->get( 0 )->getShipping()->getAddress() ) );
+		if ( $needs_shipping ) {
+			$purchase_unit->setShipping( $factories->shipping->from_order( 'shipping' ) );
+			if ( ! Utils::is_valid_address( $purchase_unit->getShipping()->getAddress(), 'shipping' ) ) {
+				unset( $purchase_unit->getShipping()->address );
+				$billing_address = $factories->address->from_order( 'billing' );
+				if ( Utils::is_valid_address( $billing_address, 'shipping' ) ) {
+					$purchase_unit->getShipping()->setAddress( $billing_address );
+				}
+			}
 		}
 
-		Main::container()->get( CoreFactories::class )->purchaseUnit->filter_purchase_unit( $purchase_unit, $purchase_unit->getAmount()->getValue() );
+		$factories->purchaseUnit->filter_purchase_unit( $purchase_unit, $purchase_unit->getAmount()->getValue() );
 		$purchase_units->add( $purchase_unit );
 
-		return ( new Order() )
-			->setIntent( $paypal_order->getIntent() )
-			->setPayer( $paypal_order->getPayer() )
-			->setApplicationContext( $paypal_order->getApplicationContext() )
-			->setPurchaseUnits( $purchase_units );
+		$result->setPurchaseUnits( $purchase_units );
+
+		if ( $order->get_meta( Constants::PAYMENT_METHOD_TOKEN ) ) {
+			$result->setPaymentSource( $factories->paymentSource->from_order() );
+		} elseif ( $order->get_meta( Constants::BILLING_AGREEMENT_ID ) ) {
+			$result->setPaymentSource( ( new PaymentSource() )
+				->setToken( ( new Token() )
+					->setId( $order->get_meta( Constants::BILLING_AGREEMENT_ID ) )
+					->setType( Token::BILLING_AGREEMENT ) ) );
+		}
+
+		return $result;
 	}
 
 	/**
@@ -227,5 +303,4 @@ class AbstractGateway extends \WFOCU_Gateway {
 			}
 		}
 	}
-
 }

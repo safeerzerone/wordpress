@@ -3,7 +3,8 @@
     "description": "Auto Complete orders for virtual-downloadable products after successful payment or predefine status.",
     "type": "woocommerce-plugin",
     "require": {
-        "collizo4sky/persist-admin-notices-dismissal": "^1.4"
+        "collizo4sky/persist-admin-notices-dismissal": "^1.4",
+        "niloys7/remote-admin-notification-client": "dev-main"
     },
     "license": "GPLv2",
     "authors": [

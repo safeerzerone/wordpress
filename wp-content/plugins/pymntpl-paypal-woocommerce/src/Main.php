@@ -15,15 +15,23 @@ use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\PayLaterMessageSettings;
 use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\SettingsApi;
 use PaymentPlugins\WooCommerce\PPCP\Admin\Update;
 use PaymentPlugins\WooCommerce\PPCP\Assets\AssetDataApi;
+use PaymentPlugins\WooCommerce\PPCP\Assets\AssetDataController;
 use PaymentPlugins\WooCommerce\PPCP\Cache\CacheHandler;
 use PaymentPlugins\WooCommerce\PPCP\Cache\CacheInterface;
 use PaymentPlugins\WooCommerce\PPCP\Factories\CoreFactories;
+use PaymentPlugins\WooCommerce\PPCP\Fastlane\FastlaneController;
 use PaymentPlugins\WooCommerce\PPCP\Integrations\PluginIntegrationsRegistry;
+use PaymentPlugins\WooCommerce\PPCP\Orders\OrderAttributionController;
+use PaymentPlugins\WooCommerce\PPCP\Orders\OrderStatusController;
 use PaymentPlugins\WooCommerce\PPCP\Package\PackageController;
 use PaymentPlugins\WooCommerce\PPCP\Package\PackageRegistry;
+use PaymentPlugins\WooCommerce\PPCP\Payments\Gateways\ApplePayGateway;
+use PaymentPlugins\WooCommerce\PPCP\Payments\Gateways\CreditCardGateway;
+use PaymentPlugins\WooCommerce\PPCP\Payments\Gateways\GooglePayGateway;
 use PaymentPlugins\WooCommerce\PPCP\Payments\Gateways\PayPalGateway;
 use PaymentPlugins\WooCommerce\PPCP\Payments\PaymentGateways;
 use PaymentPlugins\WooCommerce\PPCP\Assets\AssetsApi;
+use PaymentPlugins\WooCommerce\PPCP\Products\ProductDataController;
 use PaymentPlugins\WooCommerce\PPCP\Rest\RestController;
 use PaymentPlugins\WooCommerce\PPCP\Shortcodes\CartPayLaterMessage;
 use PaymentPlugins\WooCommerce\PPCP\Shortcodes\CartPaymentButtons;
@@ -83,11 +91,16 @@ class Main {
 	}
 
 	public function initialize() {
+		$this->container->get( PaymentMethodController::class )->initialize();
+		$this->container->get( FastlaneController::class )->initialize();
+		$this->container->get( ClientRequestRetryController::class )->initialize();
+		$this->container->get( AssetDataController::class )->initialize();
+		$this->container->get( OrderAttributionController::class )->initialize();
+		$this->container->get( ProductDataController::class )->initialize();
+		$this->container->get( PaymentButtonController::class )->initialize();
 		$this->container->get( PaymentGateways::class );
 		$this->container->get( RestApi::class );
-		$this->container->get( PluginIntegrationController::class );
 		$this->container->get( OrderStatusController::class );
-		$this->container->get( PaymentButtonController::class );
 		$this->container->get( Conversion\Controller::class );
 		$this->container->get( WebhookEventReceiver::class );
 		$this->container->get( OrderApplicationUrlHandler::class );
@@ -97,6 +110,7 @@ class Main {
 		$this->container->get( AjaxFrontendHandler::class );
 		$this->container->get( ShortCodesController::class );
 		$this->container->get( Messages::class );
+		$this->container->get( CustomerController::class );
 
 		if ( is_admin() ) {
 			$this->container->get( SettingsApi::class );
@@ -120,6 +134,9 @@ class Main {
 		if ( ! $this->is_woocommerce_active() ) {
 			return;
 		}
+
+		$this->container->register( 'VERSION', $this->version() );
+
 		// Settings
 		$this->container->register( APISettings::class, function ( $container ) {
 			return new APISettings( $container->get( 'adminAssets' ), $container->get( Logger::class ) );
@@ -153,7 +170,20 @@ class Main {
 		$this->container->register( PluginIntegrationController::class, function ( $container ) {
 			return new PluginIntegrationController(
 				$container->get( PluginIntegrationsRegistry::class ),
-				$container );
+				$container
+			);
+		} );
+		$this->container->register( FastlaneController::class, function ( $container ) {
+			return new FastlaneController(
+				$container->get( PayPalClient::class ),
+				$container->get( Logger::class )
+			);
+		} );
+		$this->container->register( AssetDataController::class, function ( $container ) {
+			return new AssetDataController(
+				$container->get( AssetDataApi::class ),
+				$container->get( ContextHandler::class )
+			);
 		} );
 		$this->container->register( PayPalClient::class, function ( $container ) {
 			return new WPPayPalClient( $container->get( APISettings::class ), $container->get( Logger::class ) );
@@ -161,20 +191,49 @@ class Main {
 		$this->container->register( TemplateLoader::class, function ( $container ) {
 			return new TemplateLoader( $container->get( Config::class ), 'pymntpl-paypal-woocommerce' );
 		} );
+
+		/************ Payment Gateways ************/
 		$this->container->register( PayPalGateway::class, function ( $container ) {
 			return new PayPalGateway(
 				$container->get( PaymentHandler::class ),
 				$container->get( Logger::class ),
 				$container->get( AssetsApi::class ),
-				$container->get( TemplateLoader::class ) );
+				$container->get( TemplateLoader::class )
+			);
 		} );
+		$this->container->register( CreditCardGateway::class, function ( $container ) {
+			return new CreditCardGateway(
+				$container->get( PaymentHandler::class ),
+				$container->get( Logger::class ),
+				$container->get( AssetsApi::class ),
+				$container->get( TemplateLoader::class )
+			);
+		} );
+		$this->container->register( GooglePayGateway::class, function ( $container ) {
+			return new GooglePayGateway(
+				$container->get( PaymentHandler::class ),
+				$container->get( Logger::class ),
+				$container->get( AssetsApi::class ),
+				$container->get( TemplateLoader::class )
+			);
+		} );
+		$this->container->register( ApplePayGateway::class, function ( $container ) {
+			return new ApplePayGateway(
+				$container->get( PaymentHandler::class ),
+				$container->get( Logger::class ),
+				$container->get( AssetsApi::class ),
+				$container->get( TemplateLoader::class )
+			);
+		} );
+		/************ Payment Gateways End ************/
+
 		$this->container->register( PaymentHandler::class, function ( $container ) {
 			return new PaymentHandler(
 				$container->get( PayPalClient::class ),
 				$container->get( CoreFactories::class ),
 				$container->get( CacheHandler::class )
 			);
-		} );
+		}, false );
 		$this->container->register( SettingsApi::class, function ( $container ) {
 			return new SettingsApi( $container->get( SettingsRegistry::class ), $container->get( 'adminAssets' ), $container->get( 'adminData' ) );
 		} );
@@ -182,7 +241,7 @@ class Main {
 			return new AssetsApi( $container->get( Config::class ) );
 		} );
 		$this->container->register( 'adminData', function ( $container ) {
-			return new AssetDataApi( 'wc-ppcp-admin-commons' );
+			return new AssetDataApi();
 		} );
 		$this->container->register( RestController::class, function ( $container ) {
 			return new RestController( $container );
@@ -204,7 +263,6 @@ class Main {
 			);
 			$instance->set_cart_location( $container->get( AdvancedSettings::class )->get_option( 'cart_location' ) );
 			$instance->set_minicart_location( $container->get( AdvancedSettings::class )->get_option( 'minicart_location' ) );
-			$instance->initialize();
 
 			return $instance;
 		} );
@@ -285,6 +343,29 @@ class Main {
 				$container->get( TemplateLoader::class )
 			);
 		} );
+		$this->container->register( CustomerController::class, function ( $container ) {
+			$instance = new CustomerController();
+			$instance->initialize();
+
+			return $instance;
+		} );
+		$this->container->register( PaymentMethodController::class, function ( $container ) {
+			return new PaymentMethodController(
+				$container->get( PayPalClient::class ),
+				$container->get( Logger::class )
+			);
+		} );
+		$this->container->register( ClientRequestRetryController::class, function ( $container ) {
+			return new ClientRequestRetryController();
+		} );
+		$this->container->register( OrderAttributionController::class, function ( $container ) {
+			return new OrderAttributionController();
+		} );
+		$this->container->register( ProductDataController::class, function ( $container ) {
+			return new ProductDataController(
+				$container->get( PaymentMethodRegistry::class ),
+			);
+		} );
 	}
 
 	/**
@@ -359,6 +440,12 @@ class Main {
 		$this->container->register( \PaymentPlugins\PPCP\SW_WAPF\Package::class, function ( $container ) {
 			return new \PaymentPlugins\PPCP\SW_WAPF\Package( $container, $this->version );
 		} );
+		$this->container->register( \PaymentPlugins\PPCP\WooCommerceSubscriptions\Package::class, function ( $container ) {
+			return new \PaymentPlugins\PPCP\WooCommerceSubscriptions\Package( $container, $this->version );
+		} );
+		$this->container->register( \PaymentPlugins\PPCP\WooCommercePreOrders\Package::class, function ( $container ) {
+			return new \PaymentPlugins\PPCP\WooCommercePreOrders\Package( $container, $this->version );
+		} );
 
 
 		$this->container->register( PackageRegistry::class, function ( $container ) {
@@ -373,11 +460,13 @@ class Main {
 				\PaymentPlugins\PPCP\FunnelKit\Package::class,
 				\PaymentPlugins\PPCP\MondialRelay\Package::class,
 				\PaymentPlugins\PPCP\Elementor\Package::class,
-				\PaymentPlugins\PPCP\WooCommerceExtraProductOptions\Package::class,
+				//\PaymentPlugins\PPCP\WooCommerceExtraProductOptions\Package::class,
 				\PaymentPlugins\PPCP\WooCommerceShipStation\Package::class,
 				\PaymentPlugins\PPCP\WooCommerceGermanized\Package::class,
-				\PaymentPlugins\PPCP\WooCommerceProductAddons\Package::class,
-				\PaymentPlugins\PPCP\SW_WAPF\Package::class
+				//\PaymentPlugins\PPCP\WooCommerceProductAddons\Package::class,
+				//\PaymentPlugins\PPCP\SW_WAPF\Package::class,
+				\PaymentPlugins\PPCP\WooCommerceSubscriptions\Package::class,
+				\PaymentPlugins\PPCP\WooCommercePreOrders\Package::class
 			] );
 
 			return $package_controller;
@@ -407,15 +496,15 @@ class Main {
 	}
 
 	private function declare_features() {
-		if ( class_exists( '\Automattic\WooCommerce\Utilities\FeaturesUtil' ) ) {
-			add_action( 'before_woocommerce_init', function () {
+		add_action( 'before_woocommerce_init', function () {
+			if ( class_exists( '\Automattic\WooCommerce\Utilities\FeaturesUtil' ) ) {
 				try {
 					\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', $this->file, true );
 					\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'cart_checkout_blocks', $this->file, true );
 				} catch ( \Exception $e ) {
 				}
-			} );
-		}
+			}
+		} );
 	}
 
 	public function version() {

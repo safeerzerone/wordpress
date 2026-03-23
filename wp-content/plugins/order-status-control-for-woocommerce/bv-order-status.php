@@ -6,17 +6,17 @@
  * Plugin Name:       Order Status Control for WooCommerce
  * Plugin URI:
  * Description:       Auto Complete orders for virtual-downloadable products after successful payment or predefine status.
- * Version:           1.0.3
+ * Version:           1.2
  * Author:            Bright Plugins
  * Author URI:        https://BrightPlugins.com
  * Text Domain:       bv-order-status
  * Domain Path:       /languages
- * Tested up to: 6.5.3
+ * Tested up to: 6.8.3
  * Requires Plugins: woocommerce
  * Requires at least: 5.3
- * WC requires at least: 4.8
- * WC tested up to: 8.8.3
- * Requires PHP: 7.2
+ * WC requires at least: 5.0
+ * WC tested up to: 10.3.4
+ * Requires PHP: 7.4
  * @package           bv-order-status
  *
  * @link              http://BrightVessel.com
@@ -31,21 +31,30 @@ if ( ! defined( 'WPINC' ) ) {
 /**
  * Define the required plugin constants
  */
-define( 'BVOS_VER', '1.0.3' );
+define( 'BVOS_VER', '1.2' );
 define( 'BVOS_FILE', __FILE__ );
 define( 'BVOS_BASE_FILE', plugin_basename( __FILE__ ) );
 
 require __DIR__ . '/vendor/autoload.php';
 use BP_Order_Control\Bootstrap;
 
-add_action(
-	'before_woocommerce_init',
-	function () {
-		if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
-			\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
-		}
+add_action( 'before_woocommerce_init', function () {
+	if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
 	}
-);
+	if ( class_exists( '\Automattic\WooCommerce\Utilities\FeaturesUtil' ) ) {
+			\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'cart_checkout_blocks', __FILE__, false );
+		}
+} );
+
+/**
+ * 
+ */
+$can_new_version_be_instantiated = isset( NS7_RDNC::$version ) && version_compare( NS7_RDNC::$version, '2.0', '>=' );
+if( $can_new_version_be_instantiated ) {
+	NS7_RDNC::instance()->add_notification( 256, '1784b781c1c40478', 'https://brightplugins.com', 6, 'wc-settings' );
+}
+
 final class BP_Order_Status_Control {
 
 	private function __construct() {

@@ -3,6 +3,7 @@
 namespace PaymentPlugins\WooCommerce\PPCP;
 
 use PaymentPlugins\PayPalSDK\Capture;
+use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\AdvancedSettings;
 use PaymentPlugins\WooCommerce\PPCP\Payments\Gateways\AbstractGateway;
 use PaymentPlugins\WooCommerce\PPCP\Utilities\OrderLock;
 use PaymentPlugins\WooCommerce\PPCP\Utilities\PayPalFee;
@@ -39,13 +40,16 @@ class WebhookEventReceiver {
 	public function do_capture_completed( $capture, $event ) {
 		if ( $capture && $capture->getCustomId() ) {
 			$order = wc_get_order( $capture->getCustomId() );
-			if ( $order ) {
+			if ( $order && $order instanceof \WC_Order ) {
 				if ( ! OrderLock::has_order_lock( $order ) ) {
 					$needs_payment_complete = $order->get_meta( Constants::CAPTURE_STATUS ) === Capture::PENDING;
+
+					// If the transaction ID matches the authorization ID, then the payment needs to be completed.
+					$txn_matches_auth_id = $order->get_transaction_id() === $order->get_meta( Constants::AUTHORIZATION_ID );
 					/**
-					 * Only orders that don't have a transaction ID or ar pending review should be completed.
+					 * Only orders that don't have a transaction ID or are pending review should be completed.
 					 */
-					if ( ! $order->get_transaction_id() || $needs_payment_complete || $order->has_status( 'on-hold' ) ) {
+					if ( ! $order->get_transaction_id() || $txn_matches_auth_id || $needs_payment_complete || $order->has_status( 'on-hold' ) ) {
 						$paypal_order_id = $order->get_meta( Constants::ORDER_ID );
 						if ( $paypal_order_id ) {
 							$paypal_order = $this->client->orderMode( $order )->orders->retrieve( $paypal_order_id );
@@ -60,7 +64,11 @@ class WebhookEventReceiver {
 
 								$order->delete_meta_data( Constants::CAPTURE_STATUS );
 								$order->payment_complete( $capture->getId() );
-								$this->payment_handler->save_order_meta_data( $order, $paypal_order );
+								$payment_method = wc_get_payment_gateway_by_order( $order );
+								if ( $payment_method instanceof AbstractGateway ) {
+									$this->payment_handler->set_payment_method( $payment_method );
+									$this->payment_handler->save_order_meta_data( $order, $paypal_order );
+								}
 							} else {
 								throw new \Exception( $paypal_order->get_error_message(), 400 );
 							}
@@ -137,24 +145,42 @@ class WebhookEventReceiver {
 	}
 
 	public function do_dispute_created( $dispute, $event ) {
-		foreach ( $dispute->disputed_transactions as $txn ) {
-			$txn_id = $txn->seller_transaction_id;
-			$order  = QueryUtil::get_wc_order_from_paypal_txn( $txn_id );
-			if ( $order ) {
-				$order->update_meta_data( Constants::DISPUTE_STATUS, $order->get_status() );
-				$order->update_status( 'on-hold', sprintf( __( 'Dispute %1$s created. Dispute reason: %2$s.', 'pymntpl-paypal-woocommerce' ), $dispute->dispute_id, $dispute->reason ) );
+		/**
+		 * @var AdvancedSettings $settings
+		 */
+		$settings = wc_ppcp_get_container()->get( AdvancedSettings::class );
+		$enabled  = wc_string_to_bool( $settings->get_option( 'dispute_created', 'yes' ) );
+		if ( $enabled ) {
+			$status = $settings->get_option( 'dispute_created_status', 'on-hold' );
+			foreach ( $dispute->disputed_transactions as $txn ) {
+				$txn_id = $txn->seller_transaction_id;
+				$order  = QueryUtil::get_wc_order_from_paypal_txn( $txn_id );
+				if ( $order ) {
+					$order->update_meta_data( Constants::DISPUTE_STATUS, $order->get_status() );
+					$order->update_status( $status, sprintf( __( 'Dispute %1$s created. Dispute reason: %2$s.', 'pymntpl-paypal-woocommerce' ), $dispute->dispute_id, $dispute->reason ) );
+				}
 			}
 		}
 	}
 
 	public function do_dispute_resolved( $dispute, $event ) {
-		foreach ( $dispute->disputed_transactions as $txn ) {
-			$txn_id = $txn->seller_transaction_id;
-			$order  = QueryUtil::get_wc_order_from_paypal_txn( $txn_id );
-			if ( $order ) {
-				$status = $order->get_meta( Constants::DISPUTE_STATUS );
-				$order->delete_meta_data( Constants::DISPUTE_STATUS );
-				$order->update_status( $status, sprintf( __( 'Dispute %1$s resolved.', 'pymntpl-paypal-woocommerce' ), $dispute->dispute_id ) );
+		/**
+		 * @var AdvancedSettings $settings
+		 */
+		$settings = wc_ppcp_get_container()->get( AdvancedSettings::class );
+		$enabled  = wc_string_to_bool( $settings->get_option( 'dispute_resolved', 'yes' ) );
+		if ( $enabled ) {
+			foreach ( $dispute->disputed_transactions as $txn ) {
+				$txn_id = $txn->seller_transaction_id;
+				$order  = QueryUtil::get_wc_order_from_paypal_txn( $txn_id );
+				if ( $order ) {
+					$status = $order->get_meta( Constants::DISPUTE_STATUS );
+					if ( ! $status ) {
+						$status = $order->needs_processing() ? 'processing' : 'completed';
+					}
+					$order->delete_meta_data( Constants::DISPUTE_STATUS );
+					$order->update_status( $status, sprintf( __( 'Dispute %1$s resolved.', 'pymntpl-paypal-woocommerce' ), $dispute->dispute_id ) );
+				}
 			}
 		}
 	}

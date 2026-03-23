@@ -6,8 +6,10 @@ namespace PaymentPlugins\PPCP\Blocks\Payments;
 
 use Automattic\WooCommerce\Blocks\Assets\AssetDataRegistry;
 use Automattic\WooCommerce\Blocks\Payments\PaymentMethodRegistry;
-use PaymentPlugins\PPCP\Blocks\Package;
-use PaymentPlugins\PPCP\Blocks\Payments\Gateways\PayPalExpressGateway;
+use PaymentPlugins\PPCP\Blocks\Payments\Gateways\ApplePayGateway;
+use PaymentPlugins\PPCP\Blocks\Payments\Gateways\CreditCardGateway;
+use PaymentPlugins\PPCP\Blocks\Payments\Gateways\FastlaneGateway;
+use PaymentPlugins\PPCP\Blocks\Payments\Gateways\GooglePayGateway;
 use PaymentPlugins\PPCP\Blocks\Payments\Gateways\PayPalGateway;
 use PaymentPlugins\WooCommerce\PPCP\Admin\Settings\APISettings;
 use PaymentPlugins\WooCommerce\PPCP\Container\Container;
@@ -24,6 +26,8 @@ class Api {
 
 	private $data_api;
 
+	private $payment_gateways = [];
+
 	public function __construct( Container $container, APISettings $api_settings, RestController $rest_controller, AssetDataRegistry $data_api ) {
 		$this->container       = $container;
 		$this->api_settings    = $api_settings;
@@ -36,16 +40,25 @@ class Api {
 		add_filter( 'woocommerce_blocks_payment_method_type_registration', [ $this, 'register_payment_gateways' ] );
 		add_action( 'woocommerce_blocks_checkout_enqueue_data', [ $this, 'add_checkout_payment_method_data' ] );
 		add_action( 'woocommerce_blocks_cart_enqueue_data', [ $this, 'add_cart_payment_method_data' ] );
-		add_action( 'woocommerce_blocks_enqueue_checkout_block_scripts_after', [ $this, 'enqueue_assets' ] );
 		add_action( 'woocommerce_blocks_enqueue_cart_block_scripts_after', [ $this, 'dequeue_cart_scripts' ] );
 		add_action( 'woocommerce_blocks_enqueue_checkout_block_scripts_before', [ $this, 'dequeue_cart_scripts' ] );
-		add_filter( 'woocommerce_payment_gateways', [ $this, 'add_payment_gateways' ] );
-		add_action( 'woocommerce_rest_checkout_process_payment_with_context', array( $this, 'payment_with_context' ), 10 );
-		add_filter( 'rest_dispatch_request', [ $this, 'process_rest_dispatch_request' ], 10, 2 );
 	}
 
 	public function register_payment_gateways( PaymentMethodRegistry $registry ) {
-		$registry->register( $this->container->get( PayPalGateway::class ) );
+		$this->register( $this->container->get( PayPalGateway::class ), $registry );
+		$this->register( $this->container->get( CreditCardGateway::class ), $registry );
+		$this->register( $this->container->get( GooglePayGateway::class ), $registry );
+		$this->register( $this->container->get( ApplePayGateway::class ), $registry );
+		$this->register( $this->container->get( FastlaneGateway::class ), $registry );
+	}
+
+	private function register( $instance, PaymentMethodRegistry $registry ) {
+		$registry->register( $instance );
+		$this->payment_gateways[ $instance->get_name() ] = $instance;
+	}
+
+	public function get_payment_gateways() {
+		return $this->payment_gateways;
 	}
 
 	public function add_cart_payment_method_data() {
@@ -58,34 +71,37 @@ class Api {
 
 	public function add_payment_method_data( $context ) {
 		if ( ! $this->data_api->exists( 'ppcpGeneralData' ) ) {
-			$data = [
+			$admin_only = false;
+			if ( wc_ppcp_get_container()->get( APISettings::class )->is_admin_only_mode() ) {
+				if ( ! current_user_can( 'manage_woocommerce' ) ) {
+					$admin_only = true;
+				}
+			}
+			$card_icon_url = \plugins_url( 'assets/images/payment-methods/', WC_PLUGIN_FILE );
+			$data          = [
 				'clientId'      => $this->api_settings->get_client_id(),
 				'environment'   => $this->api_settings->get_environment(),
 				'context'       => $context,
 				'isAdmin'       => current_user_can( 'manage_woocommerce' ),
+				'adminOnly'     => $admin_only,
 				'blocksVersion' => \Automattic\WooCommerce\Blocks\Package::get_version(),
-				'i18n'          => wc_ppcp_get_container()->get( Messages::class )->get_messages()
+				'i18n'          => wc_ppcp_get_container()->get( Messages::class )->get_messages(),
+				'cardIcons'     => [
+					'amex'       => $card_icon_url . 'amex.svg',
+					'diners'     => $card_icon_url . 'diners.svg',
+					'discover'   => $card_icon_url . 'discover.svg',
+					'jcb'        => $card_icon_url . 'jcb.svg',
+					'maestro'    => $card_icon_url . 'maestro.svg',
+					'mastercard' => $card_icon_url . 'mastercard.svg',
+					'visa'       => $card_icon_url . 'visa.svg'
+				],
 			];
 			$this->data_api->add( 'ppcpGeneralData', $this->rest_controller->add_asset_data( $data ) );
 		}
 	}
 
-	public function enqueue_assets() {
-		if ( wp_script_is( 'wc-ppcp-blocks-commons', 'registered' ) ) {
-			$this->container->get( Package::ASSETS_API )->enqueue_style( 'wc-ppcp-blocks-styles', 'build/styles.css' );
-		}
-	}
-
 	public function dequeue_cart_scripts() {
 		wp_dequeue_script( 'wc-ppcp-minicart-gateway' );
-	}
-
-	public function add_payment_gateways( $gateways ) {
-		if ( ! is_admin() && $this->is_rest_request() ) {
-			$gateways['paymentplugins_ppcp_express'] = new PayPalExpressGateway();
-		}
-
-		return $gateways;
 	}
 
 	private function is_rest_request() {
@@ -94,25 +110,6 @@ class Api {
 		}
 
 		return false;
-	}
-
-	/**
-	 * @param \Automattic\WooCommerce\StoreApi\Payments\PaymentContext $payment_context
-	 */
-	public function payment_with_context( $payment_context ) {
-		if ( $payment_context->get_payment_method_instance() instanceof PayPalExpressGateway ) {
-			$payment_context->set_payment_method( 'ppcp' );
-		}
-	}
-
-	public function process_rest_dispatch_request( $value, $request ) {
-		if ( isset( $request['payment_method'] ) ) {
-			if ( $request['payment_method'] === 'paymentplugins_ppcp_express' ) {
-				$request->set_param( 'payment_method', 'ppcp' );
-			}
-		}
-
-		return $value;
 	}
 
 }

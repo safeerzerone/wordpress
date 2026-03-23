@@ -22,6 +22,7 @@ class ComposerStaticInit91bf0e64a7ebd700f2a495a6dce0343c
 
     public static $classMap = array (
         'Composer\\InstalledVersions' => __DIR__ . '/..' . '/composer/InstalledVersions.php',
+        'NS7_RDNC' => __DIR__ . '/..' . '/niloys7/remote-admin-notification-client/class-remote-notification-client.php',
         'PAnD' => __DIR__ . '/..' . '/collizo4sky/persist-admin-notices-dismissal/persist-admin-notices-dismissal.php',
     );
 
