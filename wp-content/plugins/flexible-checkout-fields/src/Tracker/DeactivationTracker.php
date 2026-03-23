@@ -46,6 +46,22 @@ class DeactivationTracker implements Hookable {
 			( new DeactivationModal\Model\FormOptions() )
 				->set_option(
 					new DeactivationModal\Model\FormOption(
+						'no_checkout_support',
+						10,
+						__( 'The plugin does not work with the default WooCommerce checkout.', 'flexible-checkout-fields' ),
+						sprintf(
+						/* translators: %1$s: Open link tag, %2$s: Close link tag */
+							esc_html__(
+								'Pssst… Did you know that we support block checkout via our Checkout Fields For Blocks plugin? It allows you to add, edit and personalize fields in the WooCommerce block checkout - quickly, conveniently and without coding. It is free - find it %1$shere%2$s',
+								'flexible-checkout-fields'
+							),
+							'<a href="' . esc_url( 'https://wordpress.org/plugins/checkout-fields-for-blocks/' ) . '" target="_blank">',
+							'</a>'
+						)
+					)
+				)
+				->set_option(
+					new DeactivationModal\Model\FormOption(
 						'plugin_not_working',
 						10,
 						__( 'The plugin does not work properly', 'flexible-checkout-fields' ),

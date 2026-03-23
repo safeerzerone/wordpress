@@ -8,7 +8,7 @@ if ( ! class_exists( 'LCW_content_protection_Metaboxes' ) ) {
 		public function __construct() {
 			add_action( 'admin_menu', array( $this, 'bw_add_metabox' ) );
 			add_action( 'save_post', array( $this, 'bw_save_metabox' ) );
-			$this->location_id = get_option( 'hlwpw_locationId' );
+			$this->location_id = lcw_get_location_id();
 		}
 
 		private function is_secured( $nonce_field, $action, $post_id ) {
@@ -41,7 +41,7 @@ if ( ! class_exists( 'LCW_content_protection_Metaboxes' ) ) {
 
 			$lcw_post_types = get_option('lcw_post_types');
 
-			if ( 'array' != gettype( $lcw_post_types ) ) {
+			if ( ! is_array( $lcw_post_types ) ) {
 				$lcw_post_types = [];
 			}
 			$lcw_post_types = array_merge( ['page','post'], $lcw_post_types );
@@ -69,6 +69,7 @@ if ( ! class_exists( 'LCW_content_protection_Metaboxes' ) ) {
 			$hlwpw_memberships = isset( $_POST['hlwpw_memberships'] ) ? hlwpw_recursive_sanitize_array ( $_POST['hlwpw_memberships'] ) : null;
 			$tags = isset( $_POST['hlwpw_required_tags'] ) ? hlwpw_recursive_sanitize_array ( $_POST['hlwpw_required_tags'] ) : null;
 			$and_tags = isset( $_POST['hlwpw_and_required_tags'] ) ? hlwpw_recursive_sanitize_array ( $_POST['hlwpw_and_required_tags'] ) : null;
+			$ld_auto_enrollment_tags = isset( $_POST['lcw_ld_auto_enrollment_tags'] ) ? hlwpw_recursive_sanitize_array ( $_POST['lcw_ld_auto_enrollment_tags'] ) : null;
 			// $no_access_action = isset( $_POST['hlwpw_no_access_action'] ) ? sanitize_text_field ( $_POST['hlwpw_no_access_action'] ) : null;
 			$hlwpw_no_access_redirect_to = isset( $_POST['hlwpw_no_access_redirect_to'] ) ? sanitize_url ( $_POST['hlwpw_no_access_redirect_to'] ) : null;
 
@@ -76,6 +77,7 @@ if ( ! class_exists( 'LCW_content_protection_Metaboxes' ) ) {
 			( !empty( $hlwpw_memberships ) ) ? update_post_meta( $post_id, $membership_meta_key, $hlwpw_memberships ) : delete_post_meta( $post_id, $membership_meta_key );
 			( !empty( $tags ) ) ? update_post_meta( $post_id, 'hlwpw_required_tags', $tags ) : delete_post_meta( $post_id, 'hlwpw_required_tags' );
 			( !empty( $and_tags ) ) ? update_post_meta( $post_id, 'hlwpw_and_required_tags', $and_tags ) : delete_post_meta( $post_id, 'hlwpw_and_required_tags' );
+			( !empty( $ld_auto_enrollment_tags ) ) ? update_post_meta( $post_id, 'lcw_ld_auto_enrollment_tags', $ld_auto_enrollment_tags ) : delete_post_meta( $post_id, 'lcw_ld_auto_enrollment_tags' );
 			// ( !empty( $no_access_action ) ) ? update_post_meta( $post_id, 'hlwpw_no_access_action', $no_access_action ) : delete_post_meta( $post_id, 'hlwpw_no_access_action' );
 			( !empty( $hlwpw_no_access_redirect_to ) ) ? update_post_meta( $post_id, 'hlwpw_no_access_redirect_to', $hlwpw_no_access_redirect_to ) : delete_post_meta( $post_id, 'hlwpw_no_access_redirect_to' );
 
@@ -85,7 +87,7 @@ if ( ! class_exists( 'LCW_content_protection_Metaboxes' ) ) {
 
 			$post_id = $post->ID;
 			$membership_meta_key = $this->location_id . "_hlwpw_memberships";			
-			$memberships = get_option( $membership_meta_key, [] );
+			$memberships = lcw_get_memberships();
 
 			$label_logged_in_user 				= __( 'Who can see this page', 'hlwpw' );
 			$hlwpw_no_login_restriction			= __( 'No Login Restriction', 'hlwpw' );
@@ -226,6 +228,21 @@ if ( ! class_exists( 'LCW_content_protection_Metaboxes' ) ) {
 			$metabox_html .= "</p>";
 
 			$metabox_html .= "<hr />";
+
+			// LearnDash auto enrollment tags
+			if ( get_post_type() == 'sfwd-courses' || get_post_type() == 'groups' ) {
+				$metabox_html .= "<p>";
+					$metabox_html .= "<label for='lcw_ld_auto_enrollment_tags'>";
+					$metabox_html .= __( 'LearnDash auto enrollment tags', 'hlwpw' );
+					$metabox_html .= "</label>";
+
+					$metabox_html .= "<select name='lcw_ld_auto_enrollment_tags[]' id='lcw-ld-auto-enrollment-tags' multiple='multiple' style='width: 100%'>";
+					$metabox_html .= hlwpw_get_tag_options($post_id, 'lcw_ld_auto_enrollment_tags');
+					$metabox_html .= "</select>";
+					$metabox_html .= "<span class='description'> " . __( 'If a user has any of these tags, they will be automatically enrolled in the course.', 'hlwpw' ) . "</span>";
+				$metabox_html .= "</p>";
+				$metabox_html .= "<hr />";
+			}
 
 			// No access action
 			$metabox_html .= "<p>";

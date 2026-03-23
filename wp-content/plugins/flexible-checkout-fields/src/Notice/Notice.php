@@ -44,4 +44,6 @@ interface Notice {
 	 * @internal
 	 */
 	public function set_notice_as_hidden( bool $is_permanently );
+
+	public function add_notice_scripts(): void;
 }

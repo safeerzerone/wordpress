@@ -882,24 +882,6 @@ class Flexible_Checkout_Fields_Plugin extends \FcfVendor\WPDesk\PluginBuilder\Pl
 	}
 
 	/**
-	 * Admin enqueue scripts.
-	 */
-	public function admin_enqueue_scripts() {
-		$suffix = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';
-		if ( function_exists( 'get_current_screen' ) ) {
-			$current_screen = get_current_screen();
-		}
-
-		$deps = [
-			'jquery',
-			'jquery-ui-sortable',
-			'jquery-ui-tooltip',
-			'jquery-ui-datepicker',
-		];
-		wp_enqueue_script( 'inspire_checkout_fields_admin_js', trailingslashit( $this->get_plugin_assets_url() ) . 'js/admin' . $suffix . '.js', $deps, $this->scripts_version );
-	}
-
-	/**
 	 * Frontend enqueue scripts.
 	 */
 	public function wp_enqueue_scripts() {

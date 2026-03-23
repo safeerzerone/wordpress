@@ -76,7 +76,8 @@
 			"js" : [
 				"assets/js/admin.js",
 				"assets/js/admin-notice.js",
-				"assets/js/checkout.js"
+				"assets/js/checkout.js",
+				"assets/js/admin-blocks.js"
 			],
 			"css" : [
 				"assets/css/admin-notice.css",
@@ -90,6 +91,7 @@
 	"scripts": {
 		"test": "echo composer is alive",
 		"phpcs": "phpcs",
+		"phpcbf": "phpcbf",
 		"phpunit-unit": "phpunit --configuration phpunit-unit.xml --coverage-text --colors=never",
 		"phpunit-unit-fast": "phpunit --configuration phpunit-unit.xml --no-coverage",
 		"phpunit-integration": "phpunit --configuration phpunit-integration.xml --coverage-text --colors=never",
@@ -101,5 +103,7 @@
 			"type": "composer",
 			"url": "https://gitlab.wpdesk.dev/api/v4/group/wpdesk/-/packages/composer/"
 		}
-	}
+	},
+	"version": "4.1.36",
+	"type": "wordpress-plugin"
 }

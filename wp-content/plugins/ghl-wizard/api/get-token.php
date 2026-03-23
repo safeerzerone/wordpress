@@ -6,7 +6,11 @@ add_action('init', function() {
     $referrer = isset( $_SERVER['HTTP_REFERER'] ) ? $_SERVER['HTTP_REFERER'] : '';
     
     if ( ! str_contains( $referrer, 'gohighlevel') ) {
-        return '';
+        return;
+    }
+
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
     }
 
     if ( isset( $_GET['code'] ) ) {
@@ -33,14 +37,14 @@ add_action('init', function() {
         delete_transient('hlwpw_location_campaigns');
         delete_transient('hlwpw_location_wokflow');
 
-        wp_redirect( admin_url( 'admin.php?page=bw-hlwpw' ) );
+        wp_redirect( admin_url( 'admin.php?page=connector-wizard-app' ) );
         exit();
     }
 });
 
 add_action('init', function() {
 
-    $hlwpw_locationId = get_option( 'hlwpw_locationId' );
+    $hlwpw_locationId = lcw_get_location_id();
     $is_access_token_valid = get_transient('is_access_token_valid');
 
     if ( ! empty( $hlwpw_locationId ) && ! $is_access_token_valid ) {

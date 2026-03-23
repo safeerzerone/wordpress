@@ -6,6 +6,7 @@ use FcfVendor\WPDesk\PluginBuilder\Plugin\AbstractPlugin;
 use FcfVendor\WPDesk\PluginBuilder\Plugin\HookableCollection;
 use FcfVendor\WPDesk\PluginBuilder\Plugin\HookableParent;
 use FcfVendor\WPDesk_Plugin_Info;
+use WPDesk\FCF\Free\Blocks;
 use WPDesk\FCF\Free\Field;
 use WPDesk\FCF\Free\Integration;
 use WPDesk\FCF\Free\Notice;
@@ -70,7 +71,9 @@ class Plugin extends AbstractPlugin implements HookableCollection {
 
 		$this->add_hookable( new Notice\NoticeIntegration( new Notice\ReviewNotice( $this ) ) );
 		$this->add_hookable( new Notice\NoticeIntegration( new Notice\FlexibleWishlistReview( $this ) ) );
+		$this->add_hookable( new Notice\NoticeIntegration( new Notice\BlockCompatibility() ) );
 		$this->add_hookable( new Settings\Page() );
+		$this->add_hookable( new Blocks\Editor() );
 		$this->add_hookable( new Form\Assets( $this->plugin_info ) );
 		$this->add_hookable( new Form\FormModifier() );
 		$this->add_hookable( new Field\FieldTranslator() );

@@ -4,18 +4,18 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6
+class ComposerStaticInit54ca9b8276717473f575315ea7ddc2c0
 {
     public static $prefixLengthsPsr4 = array (
-        'W' => 
+        'W' =>
         array (
             'WPDesk\\FCF\\Free\\' => 16,
         ),
-        'P' => 
+        'P' =>
         array (
             'Psr\\Log\\' => 8,
         ),
-        'D' => 
+        'D' =>
         array (
             'Doctrine\\Deprecations\\' => 22,
             'Doctrine\\Common\\Collections\\' => 28,
@@ -23,19 +23,19 @@ class ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6
     );
 
     public static $prefixDirsPsr4 = array (
-        'WPDesk\\FCF\\Free\\' => 
+        'WPDesk\\FCF\\Free\\' =>
         array (
             0 => __DIR__ . '/../..' . '/src',
         ),
-        'Psr\\Log\\' => 
+        'Psr\\Log\\' =>
         array (
             0 => __DIR__ . '/..' . '/psr/log/Psr/Log',
         ),
-        'Doctrine\\Deprecations\\' => 
+        'Doctrine\\Deprecations\\' =>
         array (
-            0 => __DIR__ . '/..' . '/doctrine/deprecations/lib/Doctrine/Deprecations',
+            0 => __DIR__ . '/..' . '/doctrine/deprecations/src',
         ),
-        'Doctrine\\Common\\Collections\\' => 
+        'Doctrine\\Common\\Collections\\' =>
         array (
             0 => __DIR__ . '/..' . '/doctrine/collections/lib/Doctrine/Common/Collections',
         ),
@@ -56,8 +56,8 @@ class ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6
         'Doctrine\\Common\\Collections\\ExpressionBuilder' => __DIR__ . '/..' . '/doctrine/collections/lib/Doctrine/Common/Collections/ExpressionBuilder.php',
         'Doctrine\\Common\\Collections\\ReadableCollection' => __DIR__ . '/..' . '/doctrine/collections/lib/Doctrine/Common/Collections/ReadableCollection.php',
         'Doctrine\\Common\\Collections\\Selectable' => __DIR__ . '/..' . '/doctrine/collections/lib/Doctrine/Common/Collections/Selectable.php',
-        'Doctrine\\Deprecations\\Deprecation' => __DIR__ . '/..' . '/doctrine/deprecations/lib/Doctrine/Deprecations/Deprecation.php',
-        'Doctrine\\Deprecations\\PHPUnit\\VerifyDeprecations' => __DIR__ . '/..' . '/doctrine/deprecations/lib/Doctrine/Deprecations/PHPUnit/VerifyDeprecations.php',
+        'Doctrine\\Deprecations\\Deprecation' => __DIR__ . '/..' . '/doctrine/deprecations/src/Deprecation.php',
+        'Doctrine\\Deprecations\\PHPUnit\\VerifyDeprecations' => __DIR__ . '/..' . '/doctrine/deprecations/src/PHPUnit/VerifyDeprecations.php',
         'FcfVendor\\Monolog\\Attribute\\AsMonologProcessor' => __DIR__ . '/../..' . '/vendor_prefixed/monolog/monolog/src/Monolog/Attribute/AsMonologProcessor.php',
         'FcfVendor\\Monolog\\DateTimeImmutable' => __DIR__ . '/../..' . '/vendor_prefixed/monolog/monolog/src/Monolog/DateTimeImmutable.php',
         'FcfVendor\\Monolog\\ErrorHandler' => __DIR__ . '/../..' . '/vendor_prefixed/monolog/monolog/src/Monolog/ErrorHandler.php',
@@ -173,7 +173,6 @@ class ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6
         'FcfVendor\\Monolog\\SignalHandler' => __DIR__ . '/../..' . '/vendor_prefixed/monolog/monolog/src/Monolog/SignalHandler.php',
         'FcfVendor\\Monolog\\Test\\TestCase' => __DIR__ . '/../..' . '/vendor_prefixed/monolog/monolog/src/Monolog/Test/TestCase.php',
         'FcfVendor\\Monolog\\Utils' => __DIR__ . '/../..' . '/vendor_prefixed/monolog/monolog/src/Monolog/Utils.php',
-        'FcfVendor\\Psr\\Clock\\ClockInterface' => __DIR__ . '/../..' . '/vendor_prefixed/psr/clock/src/ClockInterface.php',
         'FcfVendor\\Psr\\Container\\ContainerExceptionInterface' => __DIR__ . '/../..' . '/vendor_prefixed/psr/container/src/ContainerExceptionInterface.php',
         'FcfVendor\\Psr\\Container\\ContainerInterface' => __DIR__ . '/../..' . '/vendor_prefixed/psr/container/src/ContainerInterface.php',
         'FcfVendor\\Psr\\Container\\NotFoundExceptionInterface' => __DIR__ . '/../..' . '/vendor_prefixed/psr/container/src/NotFoundExceptionInterface.php',
@@ -208,9 +207,6 @@ class ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6
         'FcfVendor\\Psr\\Log\\Test\\DummyTest' => __DIR__ . '/../..' . '/vendor_prefixed/psr/log/Psr/Log/Test/DummyTest.php',
         'FcfVendor\\Psr\\Log\\Test\\LoggerInterfaceTest' => __DIR__ . '/../..' . '/vendor_prefixed/psr/log/Psr/Log/Test/LoggerInterfaceTest.php',
         'FcfVendor\\Psr\\Log\\Test\\TestLogger' => __DIR__ . '/../..' . '/vendor_prefixed/psr/log/Psr/Log/Test/TestLogger.php',
-        'FcfVendor\\Psr\\SimpleCache\\CacheException' => __DIR__ . '/../..' . '/vendor_prefixed/psr/simple-cache/src/CacheException.php',
-        'FcfVendor\\Psr\\SimpleCache\\CacheInterface' => __DIR__ . '/../..' . '/vendor_prefixed/psr/simple-cache/src/CacheInterface.php',
-        'FcfVendor\\Psr\\SimpleCache\\InvalidArgumentException' => __DIR__ . '/../..' . '/vendor_prefixed/psr/simple-cache/src/InvalidArgumentException.php',
         'FcfVendor\\WPDesk\\Dashboard\\DashboardWidget' => __DIR__ . '/../..' . '/vendor_prefixed/wpdesk/ltv-dashboard-widget/src/DashboardWidget.php',
         'FcfVendor\\WPDesk\\DeactivationModal\\Exception\\DuplicatedFormOptionKeyException' => __DIR__ . '/../..' . '/vendor_prefixed/wpdesk/wp-wpdesk-deactivation-modal/src/Exception/DuplicatedFormOptionKeyException.php',
         'FcfVendor\\WPDesk\\DeactivationModal\\Exception\\DuplicatedFormValueKeyException' => __DIR__ . '/../..' . '/vendor_prefixed/wpdesk/wp-wpdesk-deactivation-modal/src/Exception/DuplicatedFormValueKeyException.php',
@@ -376,6 +372,7 @@ class ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6
         'Psr\\Log\\Test\\DummyTest' => __DIR__ . '/..' . '/psr/log/Psr/Log/Test/DummyTest.php',
         'Psr\\Log\\Test\\LoggerInterfaceTest' => __DIR__ . '/..' . '/psr/log/Psr/Log/Test/LoggerInterfaceTest.php',
         'Psr\\Log\\Test\\TestLogger' => __DIR__ . '/..' . '/psr/log/Psr/Log/Test/TestLogger.php',
+        'WPDesk\\FCF\\Free\\Blocks\\Editor' => __DIR__ . '/../..' . '/src/Blocks/Editor.php',
         'WPDesk\\FCF\\Free\\Collections\\RouteParamBag' => __DIR__ . '/../..' . '/src/Collections/RouteParamBag.php',
         'WPDesk\\FCF\\Free\\Exception\\TemplateLoadingFailed' => __DIR__ . '/../..' . '/src/Exception/TemplateLoadingFailed.php',
         'WPDesk\\FCF\\Free\\Exception\\UnexpectedParamException' => __DIR__ . '/../..' . '/src/Exception/UnexpectedParamException.php',
@@ -434,6 +431,7 @@ class ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6
         'WPDesk\\FCF\\Free\\Integration\\Value' => __DIR__ . '/../..' . '/src/Integration/Value.php',
         'WPDesk\\FCF\\Free\\Integration\\ValueInterface' => __DIR__ . '/../..' . '/src/Integration/ValueInterface.php',
         'WPDesk\\FCF\\Free\\Marketing\\SupportPage' => __DIR__ . '/../..' . '/src/Marketing/SupportPage.php',
+        'WPDesk\\FCF\\Free\\Notice\\BlockCompatibility' => __DIR__ . '/../..' . '/src/Notice/BlockCompatibility.php',
         'WPDesk\\FCF\\Free\\Notice\\FlexibleWishlistReview' => __DIR__ . '/../..' . '/src/Notice/FlexibleWishlistReview.php',
         'WPDesk\\FCF\\Free\\Notice\\Notice' => __DIR__ . '/../..' . '/src/Notice/Notice.php',
         'WPDesk\\FCF\\Free\\Notice\\NoticeIntegration' => __DIR__ . '/../..' . '/src/Notice/NoticeIntegration.php',
@@ -551,9 +549,9 @@ class ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6::$prefixDirsPsr4;
-            $loader->classMap = ComposerStaticInit36e5f80e2e1d4d29f112ceb45253b7e6::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInit54ca9b8276717473f575315ea7ddc2c0::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInit54ca9b8276717473f575315ea7ddc2c0::$prefixDirsPsr4;
+            $loader->classMap = ComposerStaticInit54ca9b8276717473f575315ea7ddc2c0::$classMap;
 
         }, null, ClassLoader::class);
     }

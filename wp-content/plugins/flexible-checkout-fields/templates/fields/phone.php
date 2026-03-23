@@ -20,6 +20,8 @@
 		<?php if ( $args['required'] ) : ?>
 			<abbr class="required"
 				title="<?php echo esc_attr( __( 'Required Field', 'flexible-checkout-fields' ) ); ?>">*</abbr>
+		<?php else : ?>
+			<span class="optional">(<?php echo esc_html__( 'optional', 'woocommerce' ); ?>)</span>
 		<?php endif; ?>
 	</label>
 	<input

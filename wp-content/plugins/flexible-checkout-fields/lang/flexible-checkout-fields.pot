@@ -1,17 +1,17 @@
-# Copyright (C) 2025 WP Desk
+# Copyright (C) 2026 WP Desk
 # This file is distributed under the same license as the Flexible Checkout Fields plugin.
 msgid ""
 msgstr ""
-"Project-Id-Version: Flexible Checkout Fields 4.1.16\n"
+"Project-Id-Version: Flexible Checkout Fields 4.1.36\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/flexible-checkout-fields\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2025-01-29T15:28:20+00:00\n"
+"POT-Creation-Date: 2026-03-07T02:39:58+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"X-Generator: WP-CLI 2.11.0\n"
+"X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: flexible-checkout-fields\n"
 
 #. Plugin Name of the plugin
@@ -27,7 +27,7 @@ msgstr ""
 
 #. Plugin URI of the plugin
 #: flexible-checkout-fields.php
-msgid "https://www.wpdesk.net/products/flexible-checkout-fields-pro-woocommerce/"
+msgid "https://www.wpdesk.net/sk/flexible-checkout-fields-plugin/"
 msgstr ""
 
 #. Description of the plugin
@@ -42,7 +42,7 @@ msgstr ""
 
 #. Author URI of the plugin
 #: flexible-checkout-fields.php
-msgid "https://www.wpdesk.net/"
+msgid "https://www.wpdesk.net/sk/flexible-checkout-fields-author/"
 msgstr ""
 
 #: classes/display-options.php:103
@@ -93,26 +93,26 @@ msgstr ""
 msgid "Order"
 msgstr ""
 
-#: classes/plugin.php:923
+#: classes/plugin.php:905
 msgid "Uploading file..."
 msgstr ""
 
-#: classes/plugin.php:998
+#: classes/plugin.php:980
 msgid "Start here"
 msgstr ""
 
-#: classes/plugin.php:999
+#: classes/plugin.php:981
 #: src/Settings/Menu.php:35
 #: vendor_prefixed/wpdesk/wp-builder/src/Plugin/AbstractPlugin.php:188
 msgid "Settings"
 msgstr ""
 
-#: classes/plugin.php:1000
+#: classes/plugin.php:982
 #: vendor_prefixed/wpdesk/wp-builder/src/Plugin/AbstractPlugin.php:184
 msgid "Docs"
 msgstr ""
 
-#: classes/plugin.php:1004
+#: classes/plugin.php:986
 #: src/Settings/Option/LogicAdvOption.php:58
 #: src/Settings/Option/SettingSectionsAdvOption.php:37
 msgid "Upgrade to PRO"
@@ -124,6 +124,14 @@ msgstr ""
 
 #: classes/tracker.php:332
 msgid "Opt-out"
+msgstr ""
+
+#: src/Blocks/Editor.php:48
+msgid "The plugin does not work with the default WooCommerce checkout. Install Checkout Fields for Blocks to handle blocks."
+msgstr ""
+
+#: src/Blocks/Editor.php:49
+msgid "Plugin Details"
 msgstr ""
 
 #: src/Field/Type/CheckboxType.php:44
@@ -377,6 +385,7 @@ msgstr ""
 
 #. translators: %1$s: break line, %2$s: anchor opening tag, %3$s: anchor closing tag
 #: src/Settings/Option/PricingAdvOption.php:42
+#, php-format
 msgid "Add a fixed or percentage price to the field and set the tax on this price.%1$s %2$sUpgrade to PRO%3$s"
 msgstr ""
 
@@ -386,6 +395,7 @@ msgstr ""
 
 #. translators: %s field label
 #: src/Settings/Option/RegexMessageOption.php:47
+#, php-format
 msgid "The value for the %s field should conform to the required format."
 msgstr ""
 
@@ -435,6 +445,7 @@ msgstr ""
 
 #. translators: %1$s: anchor opening tag, %2$s: anchor closing tag
 #: src/Settings/Option/ValidationInfoOption.php:42
+#, php-format
 msgid "You can add custom validation in the functions.php file. Read more in the %1$splugin documentation%2$s"
 msgstr ""
 
@@ -560,6 +571,7 @@ msgstr ""
 
 #. translators: %1$s: break line, %2$s: anchor opening tag, %3$s: anchor closing tag
 #: src/Settings/Page.php:231
+#, php-format
 msgid "This field is available in the PRO version. %1$s %2$sUpgrade to PRO%3$s"
 msgstr ""
 
@@ -608,105 +620,125 @@ msgid "Pricing"
 msgstr ""
 
 #: src/Tracker/DeactivationTracker.php:51
+#: templates/notices/compatibility-notice.php:3
+msgid "The plugin does not work with the default WooCommerce checkout."
+msgstr ""
+
+#. translators: %1$s: Open link tag, %2$s: Close link tag
+#: src/Tracker/DeactivationTracker.php:54
+#: templates/notices/compatibility-notice.php:9
+#, php-format
+msgid "Pssst… Did you know that we support block checkout via our Checkout Fields For Blocks plugin? It allows you to add, edit and personalize fields in the WooCommerce block checkout - quickly, conveniently and without coding. It is free - find it %1$shere%2$s"
+msgstr ""
+
+#: src/Tracker/DeactivationTracker.php:67
 msgid "The plugin does not work properly"
 msgstr ""
 
 #. translators: %1$s: anchor opening tag, %2$s: anchor closing tag, %3$s: anchor opening tag, %4$s: anchor closing tag
-#: src/Tracker/DeactivationTracker.php:54
+#: src/Tracker/DeactivationTracker.php:70
+#, php-format
 msgid "Contact us on %1$sthe support forum%2$s or read %3$sthe plugin FAQ%4$s for help."
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:60
+#: src/Tracker/DeactivationTracker.php:76
 msgid "Please tell us what was the problem."
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:67
+#: src/Tracker/DeactivationTracker.php:83
 msgid "The plugin is difficult to use"
 msgstr ""
 
 #. translators: %1$s: anchor opening tag, %2$s: anchor closing tag, %3$s: anchor opening tag, %4$s: anchor closing tag
-#: src/Tracker/DeactivationTracker.php:70
+#: src/Tracker/DeactivationTracker.php:86
+#, php-format
 msgid "Check %1$sthe documentation%2$s or contact us on %3$sthe support forum%4$s for help."
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:76
+#: src/Tracker/DeactivationTracker.php:92
 msgid "How can we do it better? Please write what was problematic."
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:83
+#: src/Tracker/DeactivationTracker.php:99
 msgid "The plugin does not meet all the requirements"
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:85
+#: src/Tracker/DeactivationTracker.php:101
 msgid "Please write what function is missing."
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:92
+#: src/Tracker/DeactivationTracker.php:108
 #: vendor_prefixed/wpdesk/wp-wpdesk-deactivation-modal/src/Model/DefaultFormOptions.php:18
 #: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/views/tracker-deactivate.php:48
 msgid "I found a better plugin"
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:94
+#: src/Tracker/DeactivationTracker.php:110
 msgid "Please write what plugin is it and what was the reason for choosing it."
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:101
+#: src/Tracker/DeactivationTracker.php:117
 msgid "The plugin is no longer needed"
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:103
+#: src/Tracker/DeactivationTracker.php:119
 msgid "What is the reason for that?"
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:110
+#: src/Tracker/DeactivationTracker.php:126
 #: vendor_prefixed/wpdesk/wp-wpdesk-deactivation-modal/src/Model/DefaultFormOptions.php:21
 msgid "It's a temporary deactivation (I'm just debugging an issue)"
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:117
+#: src/Tracker/DeactivationTracker.php:133
 #: vendor_prefixed/wpdesk/wp-wpdesk-deactivation-modal/src/Model/DefaultFormOptions.php:22
 #: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/views/tracker-deactivate.php:93
 msgid "Other"
 msgstr ""
 
-#: src/Tracker/DeactivationTracker.php:119
+#: src/Tracker/DeactivationTracker.php:135
 msgid "Please tell us what made you click this option."
 msgstr ""
 
 #. translators: %1$s: field label
 #: src/Validator/Error/InvalidEmailError.php:16
+#, php-format
 msgid "The e-mail address provided is not valid for the %1$s field."
 msgstr ""
 
 #. translators: %1$s: field label
 #: src/Validator/Error/InvalidUrlError.php:16
+#, php-format
 msgid "The URL address provided is not valid for the %1$s field."
 msgstr ""
 
 #. translators: %1$s: field label
 #: src/Validator/Error/InvalidValueError.php:16
+#, php-format
 msgid "The value provided is not valid for the %1$s field."
 msgstr ""
 
 #. translators: %1$s: field label, %2$s: minimum value
 #: src/Validator/Error/NumberMaxError.php:18
+#, php-format
 msgid "The maximum value for the %1$s field is %2$s."
 msgstr ""
 
 #. translators: %1$s: field label, %2$s: minimum value
 #: src/Validator/Error/NumberMinError.php:18
+#, php-format
 msgid "The minimum value for the %1$s field is %2$s."
 msgstr ""
 
 #. translators: %1$s: field label, %2$s: divider
 #: src/Validator/Error/NumberStepError.php:18
+#, php-format
 msgid "The value of the %1$s field should be divisible by %2$s."
 msgstr ""
 
 #: templates/fields/colorpicker.php:22
 #: templates/fields/email.php:22
-#: templates/fields/inspirecheckbox.php:33
+#: templates/fields/inspirecheckbox.php:35
 #: templates/fields/number.php:22
 #: templates/fields/phone.php:22
 #: templates/fields/text.php:22
@@ -721,6 +753,7 @@ msgstr ""
 
 #. translators: %1$s: open strong tag, %2$s: open strong tag, %3$s: heart icon, %4$s: open anchor tag, %5$s: open anchor tag
 #: templates/notices/flexible-wishlist.php:27
+#, php-format
 msgid "Introducing our new %1$sWooCommerce Wishlist plugin%2$s %3$s It's lightweight. It's free. Fits any theme. 100%% customizable and flexible. %4$sRead more%5$s and try it now. Uninstall any time with just one click."
 msgstr ""
 
@@ -738,6 +771,7 @@ msgstr ""
 
 #. translators: %1$s: dashicon, %2$s: break-line tag
 #: templates/notices/review.php:24
+#, php-format
 msgid "We are glad that (with our little help %1$s) the shop is now better suited to the needs. We will be grateful for the rating and feedback. %2$sIt will take less than reading this and it will help us a lot!"
 msgstr ""
 
@@ -751,6 +785,7 @@ msgstr ""
 
 #. translators: %$1s: love icon, %$2s: anchor opening tag, %$3s: anchor closing tag, %$4s: anchor opening tag, %$5s: anchor closing tag
 #: templates/views/admin-page.php:70
+#, php-format
 msgid "Created with %1$s by Sailors from %2$sWP Desk%3$s - if you like FCF %4$srate us%5$s"
 msgstr ""
 
@@ -772,6 +807,61 @@ msgstr ""
 
 #: vendor_prefixed/wpdesk/ltv-dashboard-widget/src/DashboardWidget.php:307
 msgid "More info"
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:206
+#, php-format
+msgid "The &#8220;%s&#8221; plugin cannot run on PHP versions older than %s. Please contact your host and ask them to upgrade."
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:209
+#, php-format
+msgid "The &#8220;%s&#8221; plugin cannot run on WordPress versions older than %s. Please update WordPress."
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:212
+#, php-format
+msgid "The &#8220;%s&#8221; plugin cannot run on WooCommerce versions older than %s. Please update WooCommerce."
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:215
+#, php-format
+msgid "The &#8220;%s&#8221; plugin cannot run without OpenSSL module version at least %s. Please update OpenSSL module."
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:310
+#, php-format
+msgid "The &#8220;%1$s&#8221; plugin requires at least %2$s version of %3$s to work correctly. Please update it to its latest release."
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:416
+#, php-format
+msgid "The &#8220;%s&#8221; plugin cannot run without %s active. Please install and activate %s plugin."
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:468
+#, php-format
+msgid "The &#8220;%s&#8221; plugin requires free %s plugin. <a href=\"%s\">Install %s</a>"
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:474
+#, php-format
+msgid "The &#8220;%s&#8221; plugin requires activating %s plugin. <a href=\"%s\">Activate %s</a>"
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:516
+#, php-format
+msgid "The &#8220;%s&#8221; plugin cannot run without %s PHP module installed. Please contact your host and ask them to install %s."
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker.php:541
+#, php-format
+msgid "The &#8220;%s&#8221; plugin cannot run without %s PHP setting set to %s. Please contact your host and ask them to set %s."
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-basic-requirements/src/Basic_Requirement_Checker_With_Update_Disable.php:29
+#, php-format
+msgid "The &#8220;%s&#8221; plugin is temporarily disabled since the required %s plugin is being upgraded."
 msgstr ""
 
 #: vendor_prefixed/wpdesk/wp-builder/src/Plugin/AbstractPlugin.php:181
@@ -816,11 +906,13 @@ msgstr ""
 
 #. Translators: directory.
 #: vendor_prefixed/wpdesk/wp-logs/src/WP/WPCapture.php:23
+#, php-format
 msgid "Can not enable WP Desk Debug log! Cannot create directory %s or this directory is not writeable!"
 msgstr ""
 
 #. Translators: directory.
 #: vendor_prefixed/wpdesk/wp-logs/src/WP/WPCapture.php:36
+#, php-format
 msgid "Can not enable WP Desk Debug log! Cannot create file %s!"
 msgstr ""
 
@@ -856,6 +948,7 @@ msgstr ""
 
 #. translators: %1$s: plugin name
 #: vendor_prefixed/wpdesk/wp-wpdesk-deactivation-modal/src/Model/FormTemplate.php:38
+#, php-format
 msgid "You are deactivating %1$s plugin"
 msgstr ""
 
@@ -871,7 +964,12 @@ msgstr ""
 msgid "Skip and Deactivate"
 msgstr ""
 
-#: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/PSR/WPDesk/Tracker/OptOut.php:41
+#: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/class-wpdesk-tracker.php:164
+msgid "Submit &amp; Deactivate"
+msgstr ""
+
+#: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/PSR/WPDesk/Tracker/OptOut.php:42
+#, php-format
 msgid "You successfully opted out of collecting usage data by %1$s. If you change your mind, you can always opt in later in the plugin's quick links."
 msgstr ""
 
@@ -887,6 +985,7 @@ msgstr ""
 #: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/PSR/WPDesk/Tracker/views/tracker-connect.php:23
 #: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/views/tracker-connect.php:15
 #: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/views/tracker-notice.php:19
+#, php-format
 msgid "Hey %s,"
 msgstr ""
 
@@ -926,6 +1025,7 @@ msgid "Plugin Usage"
 msgstr ""
 
 #: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/PSR/WPDesk/Tracker/views/tracker-connect.php:70
+#, php-format
 msgid "Current settings and usage information of %1$s plugins"
 msgstr ""
 
@@ -950,6 +1050,7 @@ msgid "Current settings and usage information of WP Desk plugins"
 msgstr ""
 
 #: vendor_prefixed/wpdesk/wp-wpdesk-tracker/src/views/tracker-deactivate.php:11
+#, php-format
 msgid "You are deactivating %s plugin."
 msgstr ""
 

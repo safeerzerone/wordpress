@@ -166,6 +166,10 @@ if ( !function_exists( 'wpdesk_get_order_meta' ) ) {
 				$order = wc_get_order( $order );
 			}
 
+			if ( ! $order instanceof WC_Order ) {
+				return '';
+			}
+
 			switch ( $meta_key ) {
 				case '_parent_id':
 					return $order->get_parent_id();

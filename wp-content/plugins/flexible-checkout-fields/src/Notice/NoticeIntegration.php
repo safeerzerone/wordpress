@@ -94,6 +94,7 @@ class NoticeIntegration implements Hookable, HookablePluginDependant {
 	 */
 	public function load_scripts_for_notice() {
 		$suffix = ( defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ) ? '.js' : '.min.js';
+		$this->notice->add_notice_scripts();
 
 		wp_register_script(
 			'fcf-notice',

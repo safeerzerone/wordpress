@@ -73,4 +73,7 @@ class ReviewNotice implements Notice {
 
 		update_option( $option_name, $notice_date, true );
 	}
+
+	public function add_notice_scripts(): void {
+	}
 }
