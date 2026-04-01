@@ -135,7 +135,7 @@ class WC_Gateway_Palmodule_PayPal_Express_Checkout_Helper {
             if (!function_exists('WC')) {
                 return false;
             }
-            if (sizeof(WC()->session) == 0) {
+            if (!WC()->session->has_session()) {
                 return $page_title;
             }
             if ('Checkout' == $page_title && is_palmodule_express_checkout_ready_to_capture()) {

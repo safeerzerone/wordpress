@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2014-2023 ServMask Inc.
+ * Copyright (C) 2014-2025 ServMask Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,8 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * Attribution: This code is part of the All-in-One WP Migration plugin, developed by
  *
  * ███████╗███████╗██████╗ ██╗   ██╗███╗   ███╗ █████╗ ███████╗██╗  ██╗
  * ██╔════╝██╔════╝██╔══██╗██║   ██║████╗ ████║██╔══██╗██╔════╝██║ ██╔╝
@@ -30,11 +32,25 @@ if ( ! defined( 'ABSPATH' ) ) {
 abstract class Ai1wm_Archiver {
 
 	/**
-	 * Filename including path to the file
+	 * File name including path to the file
 	 *
 	 * @type string
 	 */
 	protected $file_name = null;
+
+	/**
+	 * File password string
+	 *
+	 * @type string
+	 */
+	protected $file_password = null;
+
+	/**
+	 * File compression type
+	 *
+	 * @type string
+	 */
+	protected $file_compression = null;
 
 	/**
 	 * Handle to the file
@@ -66,37 +82,41 @@ abstract class Ai1wm_Archiver {
 	 *
 	 * @type string
 	 */
-	protected $eof = null;
+	protected $file_eof = null;
 
 	/**
 	 * Default constructor
 	 *
 	 * Initializes filename and end of file block
 	 *
-	 * @param string $file_name Archive file
-	 * @param bool   $write     Read/write mode
+	 * @param string $file_name        File to use as archive
+	 * @param string $file_password    File password string
+	 * @param string $file_compression File compression type
+	 * @param bool   $file_write       File Read/write mode
 	 */
-	public function __construct( $file_name, $write = false ) {
-		$this->file_name = $file_name;
+	public function __construct( $file_name, $file_password = null, $file_compression = null, $file_write = false ) {
+		$this->file_name        = $file_name;
+		$this->file_password    = $file_password;
+		$this->file_compression = $file_compression;
 
 		// Initialize end of file block
-		$this->eof = pack( 'a4377', '' );
+		$this->file_eof = pack( 'a4377', '' );
 
 		// Open archive file
-		if ( $write ) {
+		if ( $file_write ) {
 			// Open archive file for writing
 			if ( ( $this->file_handle = @fopen( $file_name, 'cb' ) ) === false ) {
-				throw new Ai1wm_Not_Accessible_Exception( sprintf( __( 'Unable to open file for writing. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+				throw new Ai1wm_Not_Accessible_Exception( sprintf( __( 'Could not open file for writing. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 			}
 
 			// Seek to end of archive file
 			if ( @fseek( $this->file_handle, 0, SEEK_END ) === -1 ) {
-				throw new Ai1wm_Not_Seekable_Exception( sprintf( __( 'Unable to seek to end of file. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+				throw new Ai1wm_Not_Seekable_Exception( sprintf( __( 'Could not seek to end of file. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 			}
 		} else {
 			// Open archive file for reading
 			if ( ( $this->file_handle = @fopen( $file_name, 'rb' ) ) === false ) {
-				throw new Ai1wm_Not_Accessible_Exception( sprintf( __( 'Unable to open file for reading. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+				throw new Ai1wm_Not_Accessible_Exception( sprintf( __( 'Could not open file for reading. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 			}
 		}
 	}
@@ -112,7 +132,7 @@ abstract class Ai1wm_Archiver {
 	 */
 	public function set_file_pointer( $offset ) {
 		if ( @fseek( $this->file_handle, $offset, SEEK_SET ) === -1 ) {
-			throw new Ai1wm_Not_Seekable_Exception( sprintf( __( 'Unable to seek to offset of file. File: %s Offset: %d', AI1WM_PLUGIN_NAME ), $this->file_name, $offset ) );
+			throw new Ai1wm_Not_Seekable_Exception( sprintf( __( 'Could not seek to offset of file. File: %s Offset: %d', 'all-in-one-wp-migration' ), $this->file_name, $offset ) );
 		}
 	}
 
@@ -125,7 +145,7 @@ abstract class Ai1wm_Archiver {
 	 */
 	public function get_file_pointer() {
 		if ( ( $offset = @ftell( $this->file_handle ) ) === false ) {
-			throw new Ai1wm_Not_Tellable_Exception( sprintf( __( 'Unable to tell offset of file. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+			throw new Ai1wm_Not_Tellable_Exception( sprintf( __( 'Could not tell offset of file. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 		}
 
 		return $offset;
@@ -143,16 +163,16 @@ abstract class Ai1wm_Archiver {
 	protected function append_eof() {
 		// Seek to end of archive file
 		if ( @fseek( $this->file_handle, 0, SEEK_END ) === -1 ) {
-			throw new Ai1wm_Not_Seekable_Exception( sprintf( __( 'Unable to seek to end of file. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+			throw new Ai1wm_Not_Seekable_Exception( sprintf( __( 'Could not seek to end of file. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 		}
 
 		// Write end of file block
-		if ( ( $file_bytes = @fwrite( $this->file_handle, $this->eof ) ) !== false ) {
-			if ( strlen( $this->eof ) !== $file_bytes ) {
-				throw new Ai1wm_Quota_Exceeded_Exception( sprintf( __( 'Out of disk space. Unable to write end of block to file. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+		if ( ( $file_bytes = @fwrite( $this->file_handle, $this->file_eof ) ) !== false ) {
+			if ( strlen( $this->file_eof ) !== $file_bytes ) {
+				throw new Ai1wm_Quota_Exceeded_Exception( sprintf( __( 'Out of disk space. Could not write end of block to file. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 			}
 		} else {
-			throw new Ai1wm_Not_Writable_Exception( sprintf( __( 'Unable to write end of block to file. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+			throw new Ai1wm_Not_Writable_Exception( sprintf( __( 'Could not write end of block to file. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 		}
 	}
 
@@ -206,7 +226,7 @@ abstract class Ai1wm_Archiver {
 		}
 
 		// Trailing block does not match EOL: file is incomplete
-		if ( @fread( $this->file_handle, 4377 ) !== $this->eof ) {
+		if ( @fread( $this->file_handle, 4377 ) !== $this->file_eof ) {
 			return false;
 		}
 
@@ -225,12 +245,12 @@ abstract class Ai1wm_Archiver {
 	 */
 	public function truncate() {
 		if ( ( $offset = @ftell( $this->file_handle ) ) === false ) {
-			throw new Ai1wm_Not_Tellable_Exception( sprintf( __( 'Unable to tell offset of file. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+			throw new Ai1wm_Not_Tellable_Exception( sprintf( __( 'Could not tell offset of file. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 		}
 
 		if ( @filesize( $this->file_name ) > $offset ) {
 			if ( @ftruncate( $this->file_handle, $offset ) === false ) {
-				throw new Ai1wm_Not_Truncatable_Exception( sprintf( __( 'Unable to truncate file. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+				throw new Ai1wm_Not_Truncatable_Exception( sprintf( __( 'Could not truncate file. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 			}
 		}
 	}
@@ -251,7 +271,7 @@ abstract class Ai1wm_Archiver {
 		}
 
 		if ( @fclose( $this->file_handle ) === false ) {
-			throw new Ai1wm_Not_Closable_Exception( sprintf( __( 'Unable to close file. File: %s', AI1WM_PLUGIN_NAME ), $this->file_name ) );
+			throw new Ai1wm_Not_Closable_Exception( sprintf( __( 'Could not close file. File: %s', 'all-in-one-wp-migration' ), $this->file_name ) );
 		}
 	}
 }

@@ -67,7 +67,7 @@ function palmodule_set_session($key, $value) {
     if (!function_exists('WC')) {
         return false;
     }
-    if (sizeof(WC()->session) == 0) {
+    if (!WC()->session->has_session()) {
         return false;
     }
     $palmodule_session = WC()->session->get('palmodule_session');
@@ -79,7 +79,7 @@ function palmodule_get_session($key) {
     if (!function_exists('WC')) {
         return false;
     }
-    if (sizeof(WC()->session) == 0) {
+    if (!WC()->session->has_session()) {
         return false;
     }
     $palmodule_session = WC()->session->get('palmodule_session');
@@ -93,7 +93,7 @@ function palmodule_unset_session($key) {
     if (!function_exists('WC')) {
         return false;
     }
-    if (sizeof(WC()->session) == 0) {
+    if (!WC()->session->has_session()) {
         return false;
     }
     $palmodule_session = WC()->session->get('palmodule_session');
@@ -117,7 +117,7 @@ function palmodule_maybe_clear_session_data() {
     if (!function_exists('WC')) {
         return false;
     }
-    if (sizeof(WC()->session) == 0) {
+    if (!WC()->session->has_session()) {
         return false;
     }
     WC()->session->set('palmodule_session', '');

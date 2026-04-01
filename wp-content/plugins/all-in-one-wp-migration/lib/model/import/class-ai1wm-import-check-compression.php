@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2014-2023 ServMask Inc.
+ * Copyright (C) 2014-2025 ServMask Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +15,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
+ * Attribution: This code is part of the All-in-One WP Migration plugin, developed by
+ *
  * ███████╗███████╗██████╗ ██╗   ██╗███╗   ███╗ █████╗ ███████╗██╗  ██╗
  * ██╔════╝██╔════╝██╔══██╗██║   ██║████╗ ████║██╔══██╗██╔════╝██║ ██╔╝
  * ███████╗█████╗  ██████╔╝██║   ██║██╔████╔██║███████║███████╗█████╔╝
@@ -27,10 +29,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	die( 'Kangaroos cannot jump here' );
 }
 
-class Ai1wm_Import_Check_Decryption_Password {
+class Ai1wm_Import_Check_Compression {
 
 	public static function execute( $params ) {
-		global $ai1wm_params;
 
 		// Read package.json file
 		$handle = ai1wm_open( ai1wm_package_path( $params ), 'r' );
@@ -42,29 +43,30 @@ class Ai1wm_Import_Check_Decryption_Password {
 		// Close handle
 		ai1wm_close( $handle );
 
-		if ( ! empty( $params['decryption_password'] ) ) {
-			if ( ai1wm_is_decryption_password_valid( $package['EncryptedSignature'], $params['decryption_password'] ) ) {
-				$params['is_decryption_password_valid'] = true;
-
-				$archive = new Ai1wm_Extractor( ai1wm_archive_path( $params ), $params['decryption_password'] );
-				$archive->extract_by_files_array( ai1wm_storage_path( $params ), array( AI1WM_MULTISITE_NAME, AI1WM_DATABASE_NAME ), array(), array() );
-
-				Ai1wm_Status::info( __( 'Done validating the decryption password.', AI1WM_PLUGIN_NAME ) );
-
-				$ai1wm_params = $params;
-
-				return $params;
-			}
-
-			$decryption_password_error = __( 'The decryption password is not valid.', AI1WM_PLUGIN_NAME );
-
-			if ( defined( 'WP_CLI' ) ) {
-				WP_CLI::error( $decryption_password_error );
-			} else {
-				Ai1wm_Status::backup_is_encrypted( $decryption_password_error );
-				exit;
-			}
+		// No compression provided
+		if ( empty( $package['Compression']['Enabled'] ) || empty( $package['Compression']['Type'] ) ) {
+			return $params;
 		}
+
+		// Check if server supports decompression
+		if ( ! ai1wm_has_compression_type( $package['Compression']['Type'] ) ) {
+			throw new Ai1wm_Import_Exception(
+				wp_kses(
+					sprintf(
+						__(
+							'Importing a compressed backup is not supported on this server.
+							Please ensure <strong>%s</strong> extension is enabled. <a href="https://help.servmask.com/knowledgebase/compressed-backups/" target="_blank">Technical details</a>',
+							'all-in-one-wp-migration'
+						),
+						$package['Compression']['Type']
+					),
+					ai1wm_allowed_html_tags()
+				)
+			);
+		}
+
+		// Set progres
+		Ai1wm_Status::info( __( 'Compressed backup detected. Compression will be handled automatically.', 'all-in-one-wp-migration' ) );
 
 		return $params;
 	}
