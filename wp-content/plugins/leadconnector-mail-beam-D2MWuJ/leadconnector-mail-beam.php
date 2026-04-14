@@ -107,7 +107,7 @@ if(get_option( 'lc_email_checkbox' ) == "1"){
 			<div class="notice notice-success is-dismissible">
 			    <p>Email setting is applied.</p>
 			</div>
-				<?
+				<?php
       }
   }
 
@@ -120,7 +120,7 @@ function lcEmailAdminNoticeRemove() {
 		<div class="notice notice-success is-dismissible">
 		    <p>Email setting is removed.</p>
 		</div>
-<?
+<?php
   }
 }
 
