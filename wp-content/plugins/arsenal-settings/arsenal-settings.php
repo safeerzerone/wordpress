@@ -88,6 +88,66 @@ function arsenal_settings_stripe_api_get( $path ) {
 }
 
 /**
+ * Stripe POST v1/{path} (application/x-www-form-urlencoded body).
+ *
+ * @param string $path Path after v1/ (no leading slash).
+ * @param array  $body Request body (nested arrays supported by http_build_query).
+ * @return array|WP_Error Decoded JSON object or error.
+ */
+function arsenal_settings_stripe_api_post( $path, array $body ) {
+	$secret = arsenal_settings_get_stripe_secret_key();
+	if ( '' === $secret ) {
+		return new WP_Error(
+			'stripe_config',
+			__( 'Stripe secret key is not configured.', 'arsenal-settings' ),
+			array( 'status' => 500 )
+		);
+	}
+
+	$url      = 'https://api.stripe.com/v1/' . ltrim( (string) $path, '/' );
+	$response = wp_remote_post(
+		$url,
+		array(
+			'timeout' => 30,
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $secret,
+			),
+			'body'    => $body,
+		)
+	);
+
+	if ( is_wp_error( $response ) ) {
+		return $response;
+	}
+
+	$code = wp_remote_retrieve_response_code( $response );
+	$raw  = wp_remote_retrieve_body( $response );
+	$data = json_decode( $raw, true );
+
+	if ( ! is_array( $data ) ) {
+		return new WP_Error(
+			'stripe_invalid_response',
+			__( 'Invalid response from Stripe.', 'arsenal-settings' ),
+			array( 'status' => 502 )
+		);
+	}
+
+	if ( $code >= 400 ) {
+		$message = isset( $data['error']['message'] ) ? $data['error']['message'] : __( 'Stripe request failed.', 'arsenal-settings' );
+		return new WP_Error(
+			isset( $data['error']['type'] ) ? 'stripe_' . sanitize_key( $data['error']['type'] ) : 'stripe_error',
+			$message,
+			array(
+				'status'       => $code,
+				'stripe_error' => isset( $data['error'] ) ? $data['error'] : null,
+			)
+		);
+	}
+
+	return $data;
+}
+
+/**
  * Build a Stripe v1 path with query string (RFC3986) so expand[] survives encoding correctly.
  *
  * @param string $path  Path after v1/ (no leading slash), without query string.
@@ -289,6 +349,138 @@ function arsenal_settings_stripe_get_customer_default_payment_method_id( $custom
 }
 
 /**
+ * First PaymentMethod attached to the customer (when no invoice default is set).
+ *
+ * @param string $customer_id cus_….
+ * @param string $type        Stripe payment method type (card, us_bank_account, sepa_debit).
+ * @return string pm_… or empty.
+ */
+function arsenal_settings_stripe_get_first_customer_payment_method_id( $customer_id, $type = 'card' ) {
+	if ( ! preg_match( '/^cus_[a-zA-Z0-9]+$/', (string) $customer_id ) ) {
+		return '';
+	}
+	$allowed = array( 'card', 'us_bank_account', 'sepa_debit' );
+	if ( ! in_array( (string) $type, $allowed, true ) ) {
+		$type = 'card';
+	}
+	$path = arsenal_settings_stripe_path_with_query(
+		'payment_methods',
+		array(
+			'customer' => (string) $customer_id,
+			'type'     => (string) $type,
+			'limit'    => 1,
+		)
+	);
+	$data = arsenal_settings_stripe_api_get( $path );
+	if ( is_wp_error( $data ) || empty( $data['data'][0]['id'] ) ) {
+		return '';
+	}
+	$id = (string) $data['data'][0]['id'];
+	return preg_match( '/^pm_[a-zA-Z0-9]+$/', $id ) ? $id : '';
+}
+
+/**
+ * Pick a PaymentMethod to charge: subscription default, then customer invoice default, then first attached PM.
+ *
+ * @param string $customer_id     cus_….
+ * @param array  $subscription_row Subscription object from Stripe.
+ * @return string pm_… or empty.
+ */
+function arsenal_settings_stripe_resolve_payment_method_for_charge( $customer_id, array $subscription_row ) {
+	$sub_pm = isset( $subscription_row['default_payment_method'] ) ? $subscription_row['default_payment_method'] : null;
+	if ( is_string( $sub_pm ) && preg_match( '/^pm_[a-zA-Z0-9]+$/', $sub_pm ) ) {
+		return $sub_pm;
+	}
+	if ( is_array( $sub_pm ) && ! empty( $sub_pm['id'] ) && preg_match( '/^pm_[a-zA-Z0-9]+$/', (string) $sub_pm['id'] ) ) {
+		return (string) $sub_pm['id'];
+	}
+	$from_customer = arsenal_settings_stripe_get_customer_default_payment_method_id( $customer_id );
+	if ( $from_customer !== '' ) {
+		return $from_customer;
+	}
+	$first = arsenal_settings_stripe_get_first_customer_payment_method_id( $customer_id, 'card' );
+	if ( $first !== '' ) {
+		return $first;
+	}
+	return arsenal_settings_stripe_get_first_customer_payment_method_id( $customer_id, 'us_bank_account' );
+}
+
+/**
+ * Pay an open Stripe invoice (server-side), e.g. first subscription invoice.
+ *
+ * @param string $invoice_id Invoice id in_….
+ * @param string $payment_method_id pm_… (recommended for reliable collection).
+ * @return array|WP_Error Paid invoice object or error.
+ */
+function arsenal_settings_stripe_invoice_pay( $invoice_id, $payment_method_id ) {
+	if ( ! preg_match( '/^in_[a-zA-Z0-9]+$/', (string) $invoice_id ) ) {
+		return new WP_Error(
+			'invalid_invoice_id',
+			__( 'Invalid Stripe invoice id.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+	$body = array(
+		'off_session' => 'true',
+	);
+	if ( $payment_method_id !== '' && preg_match( '/^pm_[a-zA-Z0-9]+$/', (string) $payment_method_id ) ) {
+		$body['payment_method'] = (string) $payment_method_id;
+	}
+	return arsenal_settings_stripe_api_post( 'invoices/' . rawurlencode( (string) $invoice_id ) . '/pay', $body );
+}
+
+/**
+ * Apply default_payment_method and payment_behavior to a Stripe Subscriptions POST body.
+ *
+ * @param array $body  Subscription create body (passed by reference).
+ * @param array $extra Same shape as arsenal_settings_stripe_create_subscription $extra.
+ */
+function arsenal_settings_stripe_subscription_body_apply_payment_options( array &$body, array $extra ) {
+	$allowed_behaviors = array( 'allow_incomplete', 'default_incomplete', 'error_if_incomplete', 'pending_if_incomplete' );
+
+	$pm = isset( $extra['default_payment_method'] ) ? trim( (string) $extra['default_payment_method'] ) : '';
+	if ( $pm !== '' && preg_match( '/^pm_[a-zA-Z0-9]+$/', $pm ) ) {
+		$body['default_payment_method'] = $pm;
+	}
+
+	if ( isset( $extra['payment_behavior'] ) && in_array( (string) $extra['payment_behavior'], $allowed_behaviors, true ) ) {
+		$body['payment_behavior'] = (string) $extra['payment_behavior'];
+		if ( 'allow_incomplete' === $body['payment_behavior'] ) {
+			// Merchant/server-initiated: Stripe attempts automatic payment without a hosted client confirmation step.
+			$body['off_session'] = 'true';
+		}
+	} else {
+		// Default: allow_incomplete (not default_incomplete). Stripe tries to charge saved PMs off-session;
+		// subscription may become active immediately when payment succeeds without frontend Elements/SCA UI.
+		// @see https://docs.stripe.com/api/subscriptions/create#create_subscription-payment_behavior
+		$body['payment_behavior']                              = 'allow_incomplete';
+		$body['payment_settings[save_default_payment_method]'] = 'on_subscription';
+		$body['off_session']                                   = 'true';
+	}
+}
+
+/**
+ * Apply subscription timing: billing_cycle_anchor, trial_period_days (Stripe Subscriptions API).
+ *
+ * @param array $body  Subscription create body (passed by reference).
+ * @param array $extra May include billing_cycle_anchor (unix), trial_period_days (0–730).
+ */
+function arsenal_settings_stripe_subscription_body_apply_schedule_options( array &$body, array $extra ) {
+	if ( isset( $extra['billing_cycle_anchor'] ) ) {
+		$anchor = (int) $extra['billing_cycle_anchor'];
+		if ( $anchor > 0 ) {
+			$body['billing_cycle_anchor'] = $anchor;
+		}
+	}
+	if ( isset( $extra['trial_period_days'] ) ) {
+		$days = (int) $extra['trial_period_days'];
+		if ( $days > 0 && $days <= 730 ) {
+			$body['trial_period_days'] = $days;
+		}
+	}
+}
+
+/**
  * Create a Stripe Subscription via the REST API.
  *
  * @see https://docs.stripe.com/api/subscriptions/create
@@ -302,7 +494,9 @@ function arsenal_settings_stripe_get_customer_default_payment_method_id( $custom
  *
  *     @type string $default_payment_method Payment method id pm_… already attached to the customer.
  *     @type string $payment_behavior       One of allow_incomplete, default_incomplete, error_if_incomplete, pending_if_incomplete.
- *                                          When no default_payment_method is sent, default_incomplete is applied so Stripe does not require a saved card up front.
+ *                                          When omitted, allow_incomplete and off_session are applied for server-side charging without frontend confirmation.
+ *     @type int    $billing_cycle_anchor   Optional. Unix timestamp aligning subscription billing cycles (@see Stripe subscription create).
+ *     @type int    $trial_period_days      Optional. Free trial length in days before the first charge (0–730).
  * }
  * @return array|WP_Error Decoded subscription object or error.
  */
@@ -325,21 +519,238 @@ function arsenal_settings_stripe_create_subscription( $customer_id, $price_id, $
 		'expand'             => array( 'latest_invoice.payment_intent' ),
 	);
 
-	$allowed_behaviors = array( 'allow_incomplete', 'default_incomplete', 'error_if_incomplete', 'pending_if_incomplete' );
+	arsenal_settings_stripe_subscription_body_apply_payment_options( $body, $extra );
+	arsenal_settings_stripe_subscription_body_apply_schedule_options( $body, $extra );
 
-	$pm = isset( $extra['default_payment_method'] ) ? trim( (string) $extra['default_payment_method'] ) : '';
-	if ( $pm !== '' && preg_match( '/^pm_[a-zA-Z0-9]+$/', $pm ) ) {
-		$body['default_payment_method'] = $pm;
+	$response = wp_remote_post(
+		'https://api.stripe.com/v1/subscriptions',
+		array(
+			'timeout' => 30,
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $secret,
+			),
+			'body'    => $body,
+		)
+	);
+
+	if ( is_wp_error( $response ) ) {
+		return $response;
 	}
 
-	if ( isset( $extra['payment_behavior'] ) && in_array( (string) $extra['payment_behavior'], $allowed_behaviors, true ) ) {
-		$body['payment_behavior'] = (string) $extra['payment_behavior'];
-	} elseif ( ! isset( $body['default_payment_method'] ) ) {
-		// No saved card on customer: create as incomplete and return PaymentIntent for client confirmation.
-		// @see https://stripe.com/docs/billing/subscriptions/build-subscriptions?ui=elements#handle-incomplete
-		$body['payment_behavior']                              = 'default_incomplete';
-		$body['payment_settings[save_default_payment_method]'] = 'on_subscription';
+	$code = wp_remote_retrieve_response_code( $response );
+	$raw  = wp_remote_retrieve_body( $response );
+	$data = json_decode( $raw, true );
+
+	if ( ! is_array( $data ) ) {
+		return new WP_Error(
+			'stripe_invalid_response',
+			__( 'Invalid response from Stripe.', 'arsenal-settings' ),
+			array( 'status' => 502 )
+		);
 	}
+
+	if ( $code >= 400 ) {
+		$message = isset( $data['error']['message'] ) ? $data['error']['message'] : __( 'Stripe request failed.', 'arsenal-settings' );
+		return new WP_Error(
+			isset( $data['error']['type'] ) ? 'stripe_' . sanitize_key( $data['error']['type'] ) : 'stripe_error',
+			$message,
+			array(
+				'status'       => $code,
+				'stripe_error' => isset( $data['error'] ) ? $data['error'] : null,
+			)
+		);
+	}
+
+	return $data;
+}
+
+/**
+ * Create a Stripe Product (minimal fields).
+ *
+ * @param string $name Product display name.
+ * @return array|WP_Error Decoded product object.
+ */
+function arsenal_settings_stripe_create_product( $name ) {
+	$secret = arsenal_settings_get_stripe_secret_key();
+	if ( '' === $secret ) {
+		return new WP_Error(
+			'stripe_config',
+			__( 'Stripe secret key is not configured. Define ARSENAL_STRIPE_SECRET_KEY in wp-config.php or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			array( 'status' => 500 )
+		);
+	}
+
+	$response = wp_remote_post(
+		'https://api.stripe.com/v1/products',
+		array(
+			'timeout' => 20,
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $secret,
+			),
+			'body'    => array(
+				'name' => $name,
+			),
+		)
+	);
+
+	if ( is_wp_error( $response ) ) {
+		return $response;
+	}
+
+	$code = wp_remote_retrieve_response_code( $response );
+	$raw  = wp_remote_retrieve_body( $response );
+	$data = json_decode( $raw, true );
+
+	if ( ! is_array( $data ) ) {
+		return new WP_Error(
+			'stripe_invalid_response',
+			__( 'Invalid response from Stripe.', 'arsenal-settings' ),
+			array( 'status' => 502 )
+		);
+	}
+
+	if ( $code >= 400 ) {
+		$message = isset( $data['error']['message'] ) ? $data['error']['message'] : __( 'Stripe request failed.', 'arsenal-settings' );
+		return new WP_Error(
+			isset( $data['error']['type'] ) ? 'stripe_' . sanitize_key( $data['error']['type'] ) : 'stripe_error',
+			$message,
+			array(
+				'status'       => $code,
+				'stripe_error' => isset( $data['error'] ) ? $data['error'] : null,
+			)
+		);
+	}
+
+	return $data;
+}
+
+/**
+ * Create a Stripe Subscription with inline price_data (new recurring Price; Product must exist or be created first).
+ *
+ * Current Stripe API requires `items[].price_data.product` (a Product id). Inline `product_data` on subscriptions is not accepted.
+ * When `product_name` is supplied without `product`, a Product is created via the Products API, then the subscription references it.
+ *
+ * @see https://docs.stripe.com/api/subscriptions/create#create_subscription-items-price_data
+ *
+ * @param string $customer_id Stripe Customer ID (cus_…).
+ * @param int    $quantity    Line item quantity (min 1).
+ * @param array  $inline {
+ *     @type string $currency          Three-letter ISO currency (e.g. gbp, usd).
+ *     @type int    $unit_amount       Amount in the smallest currency unit (e.g. pence).
+ *     @type string $interval          One of day, week, month, year.
+ *     @type int    $interval_count    Optional. Default 1. Billing period multiplier.
+ *     @type string $product           Optional. Existing Stripe Product id prod_…. If set, used as price_data.product.
+ *     @type string $product_name      If product is omitted, a new Product is created with this name (max 500 chars).
+ * }
+ * @param array  $extra       Optional default_payment_method, payment_behavior (same as create_subscription).
+ * @return array|WP_Error
+ */
+function arsenal_settings_stripe_create_subscription_inline_price( $customer_id, $quantity, array $inline, array $extra = array() ) {
+	$secret = arsenal_settings_get_stripe_secret_key();
+	if ( '' === $secret ) {
+		return new WP_Error(
+			'stripe_config',
+			__( 'Stripe secret key is not configured. Define ARSENAL_STRIPE_SECRET_KEY in wp-config.php or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			array( 'status' => 500 )
+		);
+	}
+
+	$quantity = max( 1, (int) $quantity );
+
+	$currency = isset( $inline['currency'] ) ? strtolower( trim( (string) $inline['currency'] ) ) : '';
+	if ( $currency === '' || ! preg_match( '/^[a-z]{3}$/', $currency ) ) {
+		return new WP_Error(
+			'invalid_currency',
+			__( 'Provide a valid three-letter currency code (for example gbp or usd).', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$unit_amount = isset( $inline['unit_amount'] ) ? (int) $inline['unit_amount'] : 0;
+	if ( $unit_amount < 1 ) {
+		return new WP_Error(
+			'invalid_unit_amount',
+			__( 'unit_amount must be a positive integer in the smallest currency unit (e.g. pence for GBP).', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$interval = isset( $inline['interval'] ) ? strtolower( trim( (string) $inline['interval'] ) ) : '';
+	$allowed  = array( 'day', 'week', 'month', 'year' );
+	if ( ! in_array( $interval, $allowed, true ) ) {
+		return new WP_Error(
+			'invalid_interval',
+			__( 'interval must be one of day, week, month, or year.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$interval_count = isset( $inline['interval_count'] ) ? (int) $inline['interval_count'] : 1;
+	$interval_count = max( 1, min( 365, $interval_count ) );
+
+	$existing_product = isset( $inline['product'] ) ? trim( (string) $inline['product'] ) : '';
+	$product_name     = isset( $inline['product_name'] ) ? trim( (string) $inline['product_name'] ) : '';
+
+	$product_id = '';
+	if ( $existing_product !== '' ) {
+		if ( ! preg_match( '/^prod_[a-zA-Z0-9]+$/', $existing_product ) ) {
+			return new WP_Error(
+				'invalid_product_format',
+				__( 'When provided, "product" must be a Stripe Product id (prod_…).', 'arsenal-settings' ),
+				array( 'status' => 400 )
+			);
+		}
+		$product_id = $existing_product;
+	} else {
+		if ( $product_name === '' ) {
+			return new WP_Error(
+				'missing_product',
+				__( 'Provide either "product" (Stripe Product id prod_…) or "product_name" to create a Product before the recurring Price.', 'arsenal-settings' ),
+				array( 'status' => 400 )
+			);
+		}
+		if ( function_exists( 'mb_substr' ) ) {
+			$product_name = mb_substr( $product_name, 0, 500 );
+		} else {
+			$product_name = substr( $product_name, 0, 500 );
+		}
+		$created_product = arsenal_settings_stripe_create_product( $product_name );
+		if ( is_wp_error( $created_product ) ) {
+			return $created_product;
+		}
+		if ( empty( $created_product['id'] ) || ! is_string( $created_product['id'] ) || ! preg_match( '/^prod_[a-zA-Z0-9]+$/', $created_product['id'] ) ) {
+			return new WP_Error(
+				'stripe_invalid_response',
+				__( 'Stripe did not return a valid Product id after product creation.', 'arsenal-settings' ),
+				array( 'status' => 502 )
+			);
+		}
+		$product_id = (string) $created_product['id'];
+	}
+
+	$recurring = array(
+		'interval'       => $interval,
+		'interval_count' => $interval_count,
+	);
+
+	$body = array(
+		'customer' => $customer_id,
+		'items'    => array(
+			array(
+				'quantity'   => $quantity,
+				'price_data' => array(
+					'currency'    => $currency,
+					'product'     => $product_id,
+					'unit_amount' => $unit_amount,
+					'recurring'   => $recurring,
+				),
+			),
+		),
+		'expand'   => array( 'latest_invoice.payment_intent' ),
+	);
+
+	arsenal_settings_stripe_subscription_body_apply_payment_options( $body, $extra );
+	arsenal_settings_stripe_subscription_body_apply_schedule_options( $body, $extra );
 
 	$response = wp_remote_post(
 		'https://api.stripe.com/v1/subscriptions',
@@ -435,11 +846,538 @@ function arsenal_settings_register_rest_routes() {
 					'type'              => 'string',
 					'sanitize_callback' => 'sanitize_text_field',
 				),
+				'billing_cycle_anchor'     => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+				'trial_period_days'        => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+			),
+		)
+	);
+
+	register_rest_route(
+		ARSENAL_SETTINGS_REST_NAMESPACE,
+		'/create-subscription-custom',
+		array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => 'arsenal_settings_rest_create_subscription_custom',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'customer'               => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'customer_email'         => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_email',
+				),
+				'currency'               => array(
+					'required'          => true,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'unit_amount'            => array(
+					'required' => true,
+					'type'     => 'integer',
+				),
+				'interval'               => array(
+					'required'          => true,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'interval_count'         => array(
+					'required' => false,
+					'type'     => 'integer',
+					'default'  => 1,
+				),
+				'product'                => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'product_name'           => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'quantity'               => array(
+					'required' => false,
+					'type'     => 'integer',
+					'default'  => 1,
+				),
+				'default_payment_method' => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'payment_behavior'       => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'billing_cycle_anchor'   => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+				'trial_period_days'      => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+			),
+		)
+	);
+
+	register_rest_route(
+		ARSENAL_SETTINGS_REST_NAMESPACE,
+		'/create-recurring-subscription',
+		array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => 'arsenal_settings_rest_create_recurring_subscription',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'customer'               => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'customer_email'         => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_email',
+				),
+				'price'                  => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'currency'               => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'unit_amount'            => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+				'interval'               => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'interval_count'         => array(
+					'required' => false,
+					'type'     => 'integer',
+					'default'  => 1,
+				),
+				'product'                => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'product_name'           => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'quantity'               => array(
+					'required' => false,
+					'type'     => 'integer',
+					'default'  => 1,
+				),
+				'default_payment_method' => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'payment_behavior'       => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'billing_cycle_anchor'   => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+				'trial_period_days'      => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
 			),
 		)
 	);
 }
 add_action( 'rest_api_init', 'arsenal_settings_register_rest_routes' );
+
+/**
+ * Turn a WP_Error into a REST error response (honours data.status when set).
+ *
+ * @param WP_Error $error Error.
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_from_wp_error( WP_Error $error ) {
+	$data   = $error->get_error_data();
+	$status = ( is_array( $data ) && isset( $data['status'] ) ) ? (int) $data['status'] : 500;
+	$body   = array(
+		'message' => $error->get_error_message(),
+		'status'  => false,
+		'code'    => $error->get_error_code(),
+	);
+	if ( is_array( $data ) && ! empty( $data['stripe_error'] ) ) {
+		$body['stripe_error'] = $data['stripe_error'];
+	}
+	return new WP_REST_Response( $body, $status );
+}
+
+/**
+ * Resolve Stripe customer id from REST params (same rules as create-subscription).
+ *
+ * @param string $raw_customer Trimmed "customer" param.
+ * @param string $email        Trimmed "customer_email" param.
+ * @return string|WP_Error cus_… or WP_Error (data.status set for HTTP mapping).
+ */
+function arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email ) {
+	if ( $raw_customer !== '' && preg_match( '/^cus_[a-zA-Z0-9]+$/', $raw_customer ) ) {
+		return $raw_customer;
+	}
+	if ( $raw_customer !== '' ) {
+		return new WP_Error(
+			'invalid_customer_format',
+			__( 'The "customer" value must be a Stripe Customer ID (for example cus_AbCd123), not a name or username. In Stripe Dashboard open Customers and copy the ID, or send "customer_email" with the billing email instead.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+	if ( $email !== '' && is_email( $email ) ) {
+		$looked = arsenal_settings_stripe_find_customer_id_by_email( $email );
+		if ( is_wp_error( $looked ) ) {
+			return $looked;
+		}
+		if ( $looked === '' ) {
+			return new WP_Error(
+				'stripe_customer_not_found',
+				__( 'No Stripe customer exists for that email. Create a customer in Stripe (Dashboard or API) first, then retry or pass "customer" as cus_….', 'arsenal-settings' ),
+				array( 'status' => 404 )
+			);
+		}
+		return $looked;
+	}
+
+	return new WP_Error(
+		'missing_customer',
+		__( 'Provide either "customer" (Stripe id cus_…) or a valid "customer_email" to identify the Stripe customer.', 'arsenal-settings' ),
+		array( 'status' => 400 )
+	);
+}
+
+/**
+ * When no explicit default_payment_method, attach the customer's PaymentMethod from Stripe if present.
+ *
+ * Skips when the client asks for default_incomplete (intended client-side confirmation only).
+ *
+ * @param array  $stripe_extra Passed by reference.
+ * @param string $customer_id  cus_….
+ * @param string $stripe_pb    Trimmed payment_behavior from request (empty means not set).
+ */
+function arsenal_settings_rest_maybe_apply_customer_default_pm( array &$stripe_extra, $customer_id, $stripe_pb ) {
+	if ( isset( $stripe_extra['default_payment_method'] ) ) {
+		return;
+	}
+	if ( 'default_incomplete' === trim( (string) $stripe_pb ) ) {
+		return;
+	}
+	$customer_default_pm = arsenal_settings_stripe_get_customer_default_payment_method_id( $customer_id );
+	if ( $customer_default_pm === '' ) {
+		$customer_default_pm = arsenal_settings_stripe_get_first_customer_payment_method_id( $customer_id, 'card' );
+	}
+	if ( $customer_default_pm === '' ) {
+		$customer_default_pm = arsenal_settings_stripe_get_first_customer_payment_method_id( $customer_id, 'us_bank_account' );
+	}
+	if ( $customer_default_pm !== '' ) {
+		$stripe_extra['default_payment_method'] = $customer_default_pm;
+	}
+}
+
+/**
+ * Parse default_payment_method and payment_behavior for subscription endpoints.
+ *
+ * @param WP_REST_Request $request Request.
+ * @return array|WP_Error Array with keys extra (array), stripe_pb (string), or WP_Error on invalid pm.
+ */
+function arsenal_settings_rest_parse_subscription_payment_extras( WP_REST_Request $request ) {
+	$stripe_pm = trim( (string) $request->get_param( 'default_payment_method' ) );
+	$stripe_pb = trim( (string) $request->get_param( 'payment_behavior' ) );
+	$stripe_extra = array();
+	if ( $stripe_pm !== '' ) {
+		if ( ! preg_match( '/^pm_[a-zA-Z0-9]+$/', $stripe_pm ) ) {
+			return new WP_Error(
+				'invalid_payment_method_format',
+				__( 'Optional "default_payment_method" must be a Stripe PaymentMethod id (pm_…).', 'arsenal-settings' ),
+				array( 'status' => 400 )
+			);
+		}
+		$stripe_extra['default_payment_method'] = $stripe_pm;
+	}
+	if ( $stripe_pb !== '' ) {
+		$stripe_extra['payment_behavior'] = $stripe_pb;
+	}
+	return array(
+		'extra'     => $stripe_extra,
+		'stripe_pb' => $stripe_pb,
+	);
+}
+
+/**
+ * Merge billing_cycle_anchor / trial_period_days from the request into Stripe subscription $extra.
+ *
+ * @param WP_REST_Request $request Request.
+ * @param array           $stripe_extra Passed by reference.
+ * @return null|WP_Error Null on success.
+ */
+function arsenal_settings_rest_merge_subscription_schedule_to_extra( WP_REST_Request $request, array &$stripe_extra ) {
+	if ( $request->has_param( 'billing_cycle_anchor' ) ) {
+		$a = (int) $request->get_param( 'billing_cycle_anchor' );
+		if ( $a < 1 ) {
+			return new WP_Error(
+				'invalid_billing_cycle_anchor',
+				__( 'billing_cycle_anchor must be a positive Unix timestamp.', 'arsenal-settings' ),
+				array( 'status' => 400 )
+			);
+		}
+		$stripe_extra['billing_cycle_anchor'] = $a;
+	}
+	if ( $request->has_param( 'trial_period_days' ) ) {
+		$d = (int) $request->get_param( 'trial_period_days' );
+		if ( $d < 0 || $d > 730 ) {
+			return new WP_Error(
+				'invalid_trial_period_days',
+				__( 'trial_period_days must be between 0 and 730.', 'arsenal-settings' ),
+				array( 'status' => 400 )
+			);
+		}
+		$stripe_extra['trial_period_days'] = $d;
+	}
+	return null;
+}
+
+/**
+ * Read an integer unix field from a Stripe subscription array for JSON output.
+ *
+ * @param array  $row Subscription hash from Stripe.
+ * @param string $key Field name.
+ * @return int|null
+ */
+function arsenal_settings_rest_subscription_int_field( array $row, $key ) {
+	return ( array_key_exists( $key, $row ) && null !== $row[ $key ] && '' !== $row[ $key ] ) ? (int) $row[ $key ] : null;
+}
+
+/**
+ * Normalize Stripe Customer id from a subscription payload field.
+ *
+ * @param mixed $customer_field customer string or expanded object.
+ * @return string cus_… or empty.
+ */
+function arsenal_settings_rest_normalize_stripe_customer_id( $customer_field ) {
+	if ( is_string( $customer_field ) && preg_match( '/^cus_[a-zA-Z0-9]+$/', $customer_field ) ) {
+		return $customer_field;
+	}
+	if ( is_array( $customer_field ) && ! empty( $customer_field['id'] ) && preg_match( '/^cus_[a-zA-Z0-9]+$/', (string) $customer_field['id'] ) ) {
+		return (string) $customer_field['id'];
+	}
+	return '';
+}
+
+/**
+ * Build success or error REST response after Stripe subscription create (shared shape).
+ *
+ * @param array|WP_Error $result Decoded subscription from Stripe or WP_Error.
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_subscription_created_response( $result ) {
+	if ( is_wp_error( $result ) ) {
+		return arsenal_settings_rest_from_wp_error( $result );
+	}
+
+	list( $pi_client_secret, $pi_status ) = arsenal_settings_stripe_resolve_subscription_payment_intent( $result );
+
+	// Re-load the subscription from Stripe so the payload includes full billing fields (create responses are
+	// sometimes sparse; we previously only merged this refetch when a PaymentIntent secret existed, which hid
+	// current_period_end / items for active subscriptions).
+	if ( ! empty( $result['id'] ) && preg_match( '/^sub_[a-zA-Z0-9]+$/', (string) $result['id'] ) ) {
+		$refetched = arsenal_settings_stripe_get_subscription(
+			(string) $result['id'],
+			array(
+				'latest_invoice.payment_intent',
+				'items.data.price',
+			)
+		);
+		if ( ! is_wp_error( $refetched ) && isset( $refetched['object'] ) && 'subscription' === $refetched['object'] ) {
+			list( $pi2, $st2 ) = arsenal_settings_stripe_resolve_subscription_payment_intent( $refetched );
+			if ( ( null === $pi_client_secret || '' === $pi_client_secret ) && null !== $pi2 && '' !== $pi2 ) {
+				$pi_client_secret = $pi2;
+				$pi_status         = $st2;
+			}
+			$result = $refetched;
+		}
+	}
+
+	$latest_invoice_id = null;
+	if ( isset( $result['latest_invoice'] ) ) {
+		$latest_invoice_id = is_array( $result['latest_invoice'] ) && isset( $result['latest_invoice']['id'] )
+			? (string) $result['latest_invoice']['id']
+			: (string) $result['latest_invoice'];
+	}
+
+	$invoice_summary = array(
+		'id'            => $latest_invoice_id,
+		'status'        => null,
+		'amount_due'    => null,
+		'amount_paid'   => null,
+		'pay_attempted' => false,
+		'pay_error'     => null,
+		'pay_error_code' => null,
+	);
+
+	$customer_str = arsenal_settings_rest_normalize_stripe_customer_id( isset( $result['customer'] ) ? $result['customer'] : null );
+
+	if (
+		$latest_invoice_id
+		&& preg_match( '/^in_[a-zA-Z0-9]+$/', $latest_invoice_id )
+		&& $customer_str !== ''
+	) {
+		$inv_path = arsenal_settings_stripe_path_with_query(
+			'invoices/' . rawurlencode( $latest_invoice_id ),
+			array( 'expand' => array( 'payment_intent' ) )
+		);
+		$inv = arsenal_settings_stripe_api_get( $inv_path );
+		if ( ! is_wp_error( $inv ) && isset( $inv['object'] ) && 'invoice' === $inv['object'] ) {
+			$invoice_summary['status']      = isset( $inv['status'] ) ? (string) $inv['status'] : null;
+			$invoice_summary['amount_due']  = isset( $inv['amount_due'] ) ? (int) $inv['amount_due'] : null;
+			$invoice_summary['amount_paid'] = isset( $inv['amount_paid'] ) ? (int) $inv['amount_paid'] : null;
+
+			if ( isset( $inv['status'] ) && 'draft' === $inv['status'] ) {
+				$finalized = arsenal_settings_stripe_api_post( 'invoices/' . rawurlencode( $latest_invoice_id ) . '/finalize', array() );
+				if ( ! is_wp_error( $finalized ) && isset( $finalized['object'] ) && 'invoice' === $finalized['object'] ) {
+					$inv = $finalized;
+					$invoice_summary['status']      = isset( $inv['status'] ) ? (string) $inv['status'] : null;
+					$invoice_summary['amount_due']  = isset( $inv['amount_due'] ) ? (int) $inv['amount_due'] : null;
+					$invoice_summary['amount_paid'] = isset( $inv['amount_paid'] ) ? (int) $inv['amount_paid'] : null;
+				}
+			}
+
+			$due = isset( $inv['amount_due'] ) ? (int) $inv['amount_due'] : 0;
+			if ( isset( $inv['status'] ) && 'open' === $inv['status'] && $due > 0 ) {
+				$pm_pay = arsenal_settings_stripe_resolve_payment_method_for_charge( $customer_str, $result );
+				if ( $pm_pay !== '' ) {
+					$invoice_summary['pay_attempted'] = true;
+					$paid                             = arsenal_settings_stripe_invoice_pay( $latest_invoice_id, $pm_pay );
+					if ( is_wp_error( $paid ) ) {
+						$invoice_summary['pay_error'] = $paid->get_error_message();
+						$edata                        = $paid->get_error_data();
+						if ( is_array( $edata ) && ! empty( $edata['stripe_error']['code'] ) ) {
+							$invoice_summary['pay_error_code'] = (string) $edata['stripe_error']['code'];
+						}
+						list( $pi_client_secret, $pi_status ) = arsenal_settings_stripe_resolve_subscription_payment_intent( $result );
+					} elseif ( is_array( $paid ) ) {
+						$invoice_summary['status']      = isset( $paid['status'] ) ? (string) $paid['status'] : $invoice_summary['status'];
+						$invoice_summary['amount_paid'] = isset( $paid['amount_paid'] ) ? (int) $paid['amount_paid'] : $invoice_summary['amount_paid'];
+						$invoice_summary['amount_due']  = isset( $paid['amount_due'] ) ? (int) $paid['amount_due'] : $invoice_summary['amount_due'];
+						if ( ! empty( $paid['payment_intent'] ) && is_array( $paid['payment_intent'] ) && isset( $paid['payment_intent']['status'] ) ) {
+							$pi_status = (string) $paid['payment_intent']['status'];
+						}
+						if ( ! empty( $result['id'] ) && preg_match( '/^sub_[a-zA-Z0-9]+$/', (string) $result['id'] ) ) {
+							$refetched2 = arsenal_settings_stripe_get_subscription(
+								(string) $result['id'],
+								array(
+									'latest_invoice.payment_intent',
+									'items.data.price',
+								)
+							);
+							if ( ! is_wp_error( $refetched2 ) && isset( $refetched2['object'] ) && 'subscription' === $refetched2['object'] ) {
+								$result = $refetched2;
+								list( $pi2, $st2 ) = arsenal_settings_stripe_resolve_subscription_payment_intent( $result );
+								if ( ( null === $pi_client_secret || '' === $pi_client_secret ) && null !== $pi2 && '' !== $pi2 ) {
+									$pi_client_secret = $pi2;
+									$pi_status         = $st2;
+								} elseif ( $pi_status === null || '' === (string) $pi_status ) {
+									$pi_status = $st2;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (
+		$latest_invoice_id
+		&& preg_match( '/^in_[a-zA-Z0-9]+$/', $latest_invoice_id )
+		&& isset( $invoice_summary['status'] )
+		&& 'open' === $invoice_summary['status']
+		&& isset( $invoice_summary['amount_due'] )
+		&& (int) $invoice_summary['amount_due'] > 0
+		&& ! $invoice_summary['pay_attempted']
+	) {
+		$invoice_summary['hint'] = __( 'No usable PaymentMethod was found: set the customer default in Stripe or pass default_payment_method (pm_…) so the open invoice can be paid automatically.', 'arsenal-settings' );
+	}
+
+	$sub_status = isset( $result['status'] ) ? (string) $result['status'] : '';
+	$message    = __( 'The subscription has been created.', 'arsenal-settings' );
+	if ( 'paid' === (string) ( $invoice_summary['status'] ?? '' ) ) {
+		$message = __( 'The subscription invoice was paid successfully.', 'arsenal-settings' );
+	} elseif ( 'succeeded' === (string) $pi_status ) {
+		$message = __( 'Payment succeeded for the subscription invoice.', 'arsenal-settings' );
+	} elseif ( 'incomplete' === $sub_status && $pi_client_secret ) {
+		$message = __( 'The subscription has been created. Complete payment with Stripe (use the payment_intent client_secret on the client).', 'arsenal-settings' );
+	} elseif ( in_array( $sub_status, array( 'active', 'trialing' ), true ) ) {
+		$message = __( 'The subscription is active: recurring billing is attached to this customer in Stripe.', 'arsenal-settings' );
+	}
+
+	$item_price_id = null;
+	if ( ! empty( $result['items']['data'] ) && is_array( $result['items']['data'] ) ) {
+		$first = $result['items']['data'][0];
+		if ( isset( $first['price'] ) ) {
+			$pr = $first['price'];
+			if ( is_string( $pr ) && preg_match( '/^price_[a-zA-Z0-9]+$/', $pr ) ) {
+				$item_price_id = $pr;
+			} elseif ( is_array( $pr ) && ! empty( $pr['id'] ) && preg_match( '/^price_[a-zA-Z0-9]+$/', (string) $pr['id'] ) ) {
+				$item_price_id = (string) $pr['id'];
+			}
+		}
+	}
+
+	$body = array(
+		'message'                      => $message,
+		'status'                       => true,
+		'code'                         => 'created',
+		'payment_intent_client_secret' => $pi_client_secret,
+		'payment_intent_status'        => $pi_status,
+		'latest_invoice'               => $invoice_summary,
+		'subscription'                 => array(
+			'id'                     => isset( $result['id'] ) ? $result['id'] : '',
+			'object'                 => isset( $result['object'] ) ? $result['object'] : 'subscription',
+			'customer'               => $customer_str !== '' ? $customer_str : ( isset( $result['customer'] ) ? $result['customer'] : '' ),
+			'status'                 => $sub_status,
+			'currency'               => isset( $result['currency'] ) ? $result['currency'] : '',
+			'livemode'               => isset( $result['livemode'] ) ? (bool) $result['livemode'] : false,
+			'created'                => isset( $result['created'] ) ? (int) $result['created'] : 0,
+			'collection_method'      => isset( $result['collection_method'] ) ? $result['collection_method'] : '',
+			'latest_invoice_id'      => $latest_invoice_id,
+			'default_payment_method' => isset( $result['default_payment_method'] ) ? $result['default_payment_method'] : null,
+			'billing_cycle_anchor'   => arsenal_settings_rest_subscription_int_field( $result, 'billing_cycle_anchor' ),
+			'current_period_start'   => arsenal_settings_rest_subscription_int_field( $result, 'current_period_start' ),
+			'current_period_end'     => arsenal_settings_rest_subscription_int_field( $result, 'current_period_end' ),
+			'trial_end'              => arsenal_settings_rest_subscription_int_field( $result, 'trial_end' ),
+			'item_price_id'          => $item_price_id,
+		),
+	);
+
+	return new WP_REST_Response( $body, 201 );
+}
 
 /**
  * REST callback: check-user-subscription.
@@ -466,8 +1404,8 @@ function arsenal_settings_rest_check_user_subscription() {
  * - customer_email (optional): if set, looks up cus_… in Stripe when customer is omitted
  * - quantity (optional)
  * - default_payment_method (optional): pm_… on the customer to charge immediately
- * - payment_behavior (optional): override Stripe behavior (usually omit; without pm_… we use default_incomplete).
- *   When both are omitted, if the Stripe customer has a default PaymentMethod (Dashboard / invoice settings), it is used automatically so the subscription can activate without a separate client confirmation step.
+ * - payment_behavior (optional): override Stripe behavior (usually omit; defaults to allow_incomplete + off_session for automatic payment).
+ *   When both payment_behavior and default_payment_method are omitted, the customer’s saved PaymentMethod (default or first attached) is applied when found.
  *
  * @param WP_REST_Request $request Request.
  * @return WP_REST_Response
@@ -477,74 +1415,24 @@ function arsenal_settings_rest_create_subscription( WP_REST_Request $request ) {
 	$email        = trim( (string) $request->get_param( 'customer_email' ) );
 	$price        = trim( (string) $request->get_param( 'price' ) );
 	$quantity     = $request->get_param( 'quantity' );
-	$stripe_pm = trim( (string) $request->get_param( 'default_payment_method' ) );
-	$stripe_pb = trim( (string) $request->get_param( 'payment_behavior' ) );
-	$stripe_extra = array();
-	if ( $stripe_pm !== '' ) {
-		if ( ! preg_match( '/^pm_[a-zA-Z0-9]+$/', $stripe_pm ) ) {
-			return new WP_REST_Response(
-				array(
-					'message' => __( 'Optional "default_payment_method" must be a Stripe PaymentMethod id (pm_…).', 'arsenal-settings' ),
-					'status'  => false,
-					'code'    => 'invalid_payment_method_format',
-				),
-				400
-			);
-		}
-		$stripe_extra['default_payment_method'] = $stripe_pm;
+
+	$parsed = arsenal_settings_rest_parse_subscription_payment_extras( $request );
+	if ( is_wp_error( $parsed ) ) {
+		return arsenal_settings_rest_from_wp_error( $parsed );
 	}
-	if ( $stripe_pb !== '' ) {
-		$stripe_extra['payment_behavior'] = $stripe_pb;
+	$stripe_extra = $parsed['extra'];
+	$stripe_pb    = $parsed['stripe_pb'];
+
+	$sched_err = arsenal_settings_rest_merge_subscription_schedule_to_extra( $request, $stripe_extra );
+	if ( is_wp_error( $sched_err ) ) {
+		return arsenal_settings_rest_from_wp_error( $sched_err );
 	}
 
-	$customer_id = '';
-
-	if ( $raw_customer !== '' && preg_match( '/^cus_[a-zA-Z0-9]+$/', $raw_customer ) ) {
-		$customer_id = $raw_customer;
-	} elseif ( $raw_customer !== '' ) {
-		return new WP_REST_Response(
-			array(
-				'message' => __( 'The "customer" value must be a Stripe Customer ID (for example cus_AbCd123), not a name or username. In Stripe Dashboard open Customers and copy the ID, or send "customer_email" with the billing email instead.', 'arsenal-settings' ),
-				'status'  => false,
-				'code'    => 'invalid_customer_format',
-			),
-			400
-		);
-	} elseif ( $email !== '' && is_email( $email ) ) {
-		$looked = arsenal_settings_stripe_find_customer_id_by_email( $email );
-		if ( is_wp_error( $looked ) ) {
-			$d      = $looked->get_error_data();
-			$status = isset( $d['status'] ) ? (int) $d['status'] : 500;
-			return new WP_REST_Response(
-				array(
-					'message' => $looked->get_error_message(),
-					'status'  => false,
-					'code'    => $looked->get_error_code(),
-				),
-				$status
-			);
-		}
-		if ( $looked === '' ) {
-			return new WP_REST_Response(
-				array(
-					'message' => __( 'No Stripe customer exists for that email. Create a customer in Stripe (Dashboard or API) first, then retry or pass "customer" as cus_….', 'arsenal-settings' ),
-					'status'  => false,
-					'code'    => 'stripe_customer_not_found',
-				),
-				404
-			);
-		}
-		$customer_id = $looked;
-	} else {
-		return new WP_REST_Response(
-			array(
-				'message' => __( 'Provide either "customer" (Stripe id cus_…) or a valid "customer_email" to identify the Stripe customer.', 'arsenal-settings' ),
-				'status'  => false,
-				'code'    => 'missing_customer',
-			),
-			400
-		);
+	$customer_res = arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email );
+	if ( is_wp_error( $customer_res ) ) {
+		return arsenal_settings_rest_from_wp_error( $customer_res );
 	}
+	$customer_id = $customer_res;
 
 	if ( $price === '' || ! preg_match( '/^price_[a-zA-Z0-9]+$/', $price ) ) {
 		return new WP_REST_Response(
@@ -557,85 +1445,154 @@ function arsenal_settings_rest_create_subscription( WP_REST_Request $request ) {
 		);
 	}
 
-	// If the client did not pass a pm or payment_behavior, reuse the customer's default PaymentMethod from Stripe
-	// (Dashboard "default for invoices" / API invoice_settings.default_payment_method). Otherwise we force
-	// default_incomplete and the subscription stays incomplete even though the customer already has a card on file.
-	if ( ! isset( $stripe_extra['default_payment_method'] ) && $stripe_pb === '' ) {
-		$customer_default_pm = arsenal_settings_stripe_get_customer_default_payment_method_id( $customer_id );
-		if ( $customer_default_pm !== '' ) {
-			$stripe_extra['default_payment_method'] = $customer_default_pm;
-		}
-	}
+	arsenal_settings_rest_maybe_apply_customer_default_pm( $stripe_extra, $customer_id, $stripe_pb );
 
 	$result = arsenal_settings_stripe_create_subscription( $customer_id, $price, $quantity, $stripe_extra );
 
-	if ( is_wp_error( $result ) ) {
-		$data   = $result->get_error_data();
-		$status = isset( $data['status'] ) ? (int) $data['status'] : 500;
+	return arsenal_settings_rest_subscription_created_response( $result );
+}
 
-		$body = array(
-			'message' => $result->get_error_message(),
-			'status'  => false,
-			'code'    => $result->get_error_code(),
-		);
+/**
+ * REST callback: create-subscription-custom — recurring subscription without a pre-existing Stripe Price.
+ *
+ * POST JSON or form body:
+ * - customer or customer_email (same as create-subscription)
+ * - currency (required): e.g. gbp, usd
+ * - unit_amount (required): integer, smallest currency unit (e.g. pence)
+ * - interval (required): day | week | month | year
+ * - interval_count (optional): default 1
+ * - product (optional): existing Stripe Product id prod_… (used as price_data.product; skips Product creation)
+ * - product_name (optional unless product omitted): if no prod_…, a Product is created with this name, then Price + Subscription
+ * - quantity (optional)
+ * - default_payment_method, payment_behavior (optional, same as create-subscription)
+ *
+ * @param WP_REST_Request $request Request.
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_create_subscription_custom( WP_REST_Request $request ) {
+	$raw_customer = trim( (string) $request->get_param( 'customer' ) );
+	$email        = trim( (string) $request->get_param( 'customer_email' ) );
+	$quantity     = $request->get_param( 'quantity' );
 
-		if ( ! empty( $data['stripe_error'] ) ) {
-			$body['stripe_error'] = $data['stripe_error'];
-		}
+	$parsed = arsenal_settings_rest_parse_subscription_payment_extras( $request );
+	if ( is_wp_error( $parsed ) ) {
+		return arsenal_settings_rest_from_wp_error( $parsed );
+	}
+	$stripe_extra = $parsed['extra'];
+	$stripe_pb    = $parsed['stripe_pb'];
 
-		return new WP_REST_Response( $body, $status );
+	$sched_err = arsenal_settings_rest_merge_subscription_schedule_to_extra( $request, $stripe_extra );
+	if ( is_wp_error( $sched_err ) ) {
+		return arsenal_settings_rest_from_wp_error( $sched_err );
 	}
 
-	list( $pi_client_secret, $pi_status ) = arsenal_settings_stripe_resolve_subscription_payment_intent( $result );
-
-	// If expand on create did not return a PI (encoding quirks or eventual consistency), refetch subscription once.
-	if ( ( null === $pi_client_secret || '' === $pi_client_secret ) && ! empty( $result['id'] ) && preg_match( '/^sub_[a-zA-Z0-9]+$/', (string) $result['id'] ) ) {
-		$refetched = arsenal_settings_stripe_get_subscription(
-			(string) $result['id'],
-			array( 'latest_invoice.payment_intent' )
-		);
-		if ( ! is_wp_error( $refetched ) && isset( $refetched['object'] ) && 'subscription' === $refetched['object'] ) {
-			list( $pi2, $st2 ) = arsenal_settings_stripe_resolve_subscription_payment_intent( $refetched );
-			if ( null !== $pi2 && '' !== $pi2 ) {
-				$pi_client_secret = $pi2;
-				$pi_status         = $st2;
-				$result            = $refetched;
-			}
-		}
+	$customer_res = arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email );
+	if ( is_wp_error( $customer_res ) ) {
+		return arsenal_settings_rest_from_wp_error( $customer_res );
 	}
+	$customer_id = $customer_res;
 
-	$sub_status = isset( $result['status'] ) ? (string) $result['status'] : '';
-	$message    = __( 'The subscription has been created.', 'arsenal-settings' );
-	if ( 'incomplete' === $sub_status && $pi_client_secret ) {
-		$message = __( 'The subscription has been created. Complete payment with Stripe (use the payment_intent client_secret on the client).', 'arsenal-settings' );
-	}
-
-	$latest_invoice_id = null;
-	if ( isset( $result['latest_invoice'] ) ) {
-		$latest_invoice_id = is_array( $result['latest_invoice'] ) && isset( $result['latest_invoice']['id'] )
-			? (string) $result['latest_invoice']['id']
-			: (string) $result['latest_invoice'];
-	}
-
-	$body = array(
-		'message'                      => $message,
-		'status'                       => true,
-		'code'                         => 'created',
-		'payment_intent_client_secret' => $pi_client_secret,
-		'payment_intent_status'        => $pi_status,
-		'subscription'                 => array(
-			'id'                     => isset( $result['id'] ) ? $result['id'] : '',
-			'object'                 => isset( $result['object'] ) ? $result['object'] : 'subscription',
-			'customer'               => isset( $result['customer'] ) ? $result['customer'] : '',
-			'status'                 => $sub_status,
-			'currency'               => isset( $result['currency'] ) ? $result['currency'] : '',
-			'livemode'               => isset( $result['livemode'] ) ? (bool) $result['livemode'] : false,
-			'created'                => isset( $result['created'] ) ? (int) $result['created'] : 0,
-			'collection_method'      => isset( $result['collection_method'] ) ? $result['collection_method'] : '',
-			'latest_invoice_id'      => $latest_invoice_id,
-			'default_payment_method' => isset( $result['default_payment_method'] ) ? $result['default_payment_method'] : null,
-		),
+	$inline = array(
+		'currency'       => (string) $request->get_param( 'currency' ),
+		'unit_amount'    => (int) $request->get_param( 'unit_amount' ),
+		'interval'       => (string) $request->get_param( 'interval' ),
+		'interval_count' => (int) $request->get_param( 'interval_count' ),
+		'product'        => trim( (string) $request->get_param( 'product' ) ),
+		'product_name'   => (string) $request->get_param( 'product_name' ),
 	);
 
-	return new WP_REST_Response( $body, 201 );
+	arsenal_settings_rest_maybe_apply_customer_default_pm( $stripe_extra, $customer_id, $stripe_pb );
+
+	$result = arsenal_settings_stripe_create_subscription_inline_price( $customer_id, $quantity, $inline, $stripe_extra );
+
+	return arsenal_settings_rest_subscription_created_response( $result );
+}
+
+/**
+ * REST callback: create-recurring-subscription — puts a Stripe Customer on a recurring billing schedule (Subscription).
+ *
+ * Stripe models ongoing charges as a **Subscription** (recurring invoices / PaymentIntents). This endpoint is the
+ * single entry point: use a catalog **price** (price_…), *or* define **currency**, **unit_amount**, **interval** plus
+ * **product** or **product_name** for a custom recurring amount (Product is created in Stripe when needed).
+ *
+ * Optional timing (see Stripe subscription create):
+ * - billing_cycle_anchor: Unix timestamp to align billing cycles
+ * - trial_period_days: free trial before the first full charge (0–730)
+ *
+ * @param WP_REST_Request $request Request.
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_create_recurring_subscription( WP_REST_Request $request ) {
+	$raw_customer = trim( (string) $request->get_param( 'customer' ) );
+	$email        = trim( (string) $request->get_param( 'customer_email' ) );
+	$price        = trim( (string) $request->get_param( 'price' ) );
+	$quantity     = $request->get_param( 'quantity' );
+
+	$parsed = arsenal_settings_rest_parse_subscription_payment_extras( $request );
+	if ( is_wp_error( $parsed ) ) {
+		return arsenal_settings_rest_from_wp_error( $parsed );
+	}
+	$stripe_extra = $parsed['extra'];
+	$stripe_pb    = $parsed['stripe_pb'];
+
+	$sched_err = arsenal_settings_rest_merge_subscription_schedule_to_extra( $request, $stripe_extra );
+	if ( is_wp_error( $sched_err ) ) {
+		return arsenal_settings_rest_from_wp_error( $sched_err );
+	}
+
+	$customer_res = arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email );
+	if ( is_wp_error( $customer_res ) ) {
+		return arsenal_settings_rest_from_wp_error( $customer_res );
+	}
+	$customer_id = $customer_res;
+
+	arsenal_settings_rest_maybe_apply_customer_default_pm( $stripe_extra, $customer_id, $stripe_pb );
+
+	$use_catalog_price = ( $price !== '' && preg_match( '/^price_[a-zA-Z0-9]+$/', $price ) );
+
+	$currency    = strtolower( trim( (string) $request->get_param( 'currency' ) ) );
+	$interval    = strtolower( trim( (string) $request->get_param( 'interval' ) ) );
+	$unit_amount = $request->get_param( 'unit_amount' );
+	$has_unit    = null !== $unit_amount && '' !== (string) $unit_amount;
+	$unit_int    = $has_unit ? (int) $unit_amount : 0;
+
+	$use_custom_amount = ( $currency !== '' && preg_match( '/^[a-z]{3}$/', $currency ) && $has_unit && $unit_int >= 1 && $interval !== '' );
+
+	if ( $use_catalog_price && $use_custom_amount ) {
+		return new WP_REST_Response(
+			array(
+				'message' => __( 'Send either "price" (price_…) for a catalog plan, or currency/unit_amount/interval for a custom recurring amount—not both.', 'arsenal-settings' ),
+				'status'  => false,
+				'code'    => 'ambiguous_plan',
+			),
+			400
+		);
+	}
+
+	if ( $use_catalog_price ) {
+		$result = arsenal_settings_stripe_create_subscription( $customer_id, $price, $quantity, $stripe_extra );
+		return arsenal_settings_rest_subscription_created_response( $result );
+	}
+
+	if ( $use_custom_amount ) {
+		$inline = array(
+			'currency'       => $currency,
+			'unit_amount'    => $unit_int,
+			'interval'       => $interval,
+			'interval_count' => (int) $request->get_param( 'interval_count' ),
+			'product'        => trim( (string) $request->get_param( 'product' ) ),
+			'product_name'   => (string) $request->get_param( 'product_name' ),
+		);
+		$result = arsenal_settings_stripe_create_subscription_inline_price( $customer_id, $quantity, $inline, $stripe_extra );
+		return arsenal_settings_rest_subscription_created_response( $result );
+	}
+
+	return new WP_REST_Response(
+		array(
+			'message' => __( 'Provide a recurring plan: either "price" (Stripe recurring price_…), or "currency", "unit_amount", "interval", and "product" or "product_name".', 'arsenal-settings' ),
+			'status'  => false,
+			'code'    => 'missing_plan',
+		),
+		400
+	);
 }
