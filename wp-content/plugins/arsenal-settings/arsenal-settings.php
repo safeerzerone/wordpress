@@ -33,6 +33,52 @@ function arsenal_settings_get_stripe_secret_key() {
 }
 
 /**
+ * Whether the configured Stripe secret key is a test (sk_test_…) key.
+ *
+ * @return bool
+ */
+function arsenal_settings_stripe_uses_test_mode() {
+	$sk = arsenal_settings_get_stripe_secret_key();
+	return (bool) preg_match( '/^sk_test_/', $sk );
+}
+
+/**
+ * Map a full test card number (digits only) to a Stripe test token (tok_…).
+ * Use with PaymentMethods API as card[token] so raw PAN is not sent to Stripe when raw card APIs are disabled.
+ *
+ * @param string $digits Card number, digits only.
+ * @return string tok_… or empty when unknown / not in test mode.
+ */
+function arsenal_settings_stripe_test_token_for_card_digits( $digits ) {
+	if ( ! arsenal_settings_stripe_uses_test_mode() ) {
+		return '';
+	}
+	$digits = (string) $digits;
+	$map     = array(
+		'4242424242424242'       => 'tok_visa',
+		'4000056655665556'       => 'tok_visa_debit',
+		'5555555555554444'       => 'tok_mastercard',
+		'2223003122003222'       => 'tok_visa',
+		'5200828282828210'       => 'tok_mastercard',
+		'5105105105105100'       => 'tok_mastercard_prepaid',
+		'378282246310005'        => 'tok_amex',
+		'371449635398431'        => 'tok_amex',
+		'6011111111111117'       => 'tok_discover',
+		'3056930009020004'       => 'tok_diners',
+		'36227206271667'         => 'tok_diners',
+		'3566111111111118'       => 'tok_jcb',
+		'6200000000000005'       => 'tok_unionpay',
+	);
+	/**
+	 * Add or override digit string => tok_* mappings for create-payment test flows.
+	 *
+	 * @param array<string,string> $map Card digits => Stripe test token id.
+	 */
+	$map = apply_filters( 'arsenal_settings_stripe_test_card_token_map', $map );
+	return isset( $map[ $digits ] ) ? (string) $map[ $digits ] : '';
+}
+
+/**
  * Stripe GET v1/{path}.
  *
  * @param string $path Path after v1/ (no leading slash), may include query string.
@@ -310,6 +356,34 @@ function arsenal_settings_stripe_find_customer_id_by_email( $email ) {
 }
 
 /**
+ * Create a Stripe Customer (minimal: email, optional name).
+ *
+ * @param string $email Valid email (billing / login).
+ * @param string $name  Optional display name (max 256 chars).
+ * @return array|WP_Error Decoded Customer object or error.
+ */
+function arsenal_settings_stripe_create_customer( $email, $name = '' ) {
+	$email = sanitize_email( trim( (string) $email ) );
+	if ( ! is_email( $email ) ) {
+		return new WP_Error(
+			'invalid_email',
+			__( 'A valid email is required to create a Stripe customer.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$body = array(
+		'email' => $email,
+	);
+	$name = trim( (string) $name );
+	if ( $name !== '' ) {
+		$body['name'] = function_exists( 'mb_substr' ) ? mb_substr( $name, 0, 256 ) : substr( $name, 0, 256 );
+	}
+
+	return arsenal_settings_stripe_api_post( 'customers', $body );
+}
+
+/**
  * Return the customer's default PaymentMethod id (pm_…) if set in Stripe.
  *
  * Reads invoice_settings.default_payment_method and default_payment_method on the Customer object.
@@ -406,6 +480,127 @@ function arsenal_settings_stripe_resolve_payment_method_for_charge( $customer_id
 }
 
 /**
+ * Parse card expiry (MM/YY, MM/YYYY, with / or -).
+ *
+ * @param string $raw Raw user input.
+ * @return array{ exp_month: int, exp_year: int }|null
+ */
+function arsenal_settings_parse_card_expiry( $raw ) {
+	$raw = preg_replace( '/\s+/', '', (string) $raw );
+	if ( '' === $raw ) {
+		return null;
+	}
+	if ( ! preg_match( '/^(0?[1-9]|1[0-2])[\/\-](\d{2}|\d{4})$/', $raw, $m ) ) {
+		return null;
+	}
+	$month = (int) $m[1];
+	$yp    = $m[2];
+	$year  = strlen( $yp ) === 2 ? (int) ( 2000 + (int) $yp ) : (int) $yp;
+	if ( $year < 2000 || $year > 2100 || $month < 1 || $month > 12 ) {
+		return null;
+	}
+	return array(
+		'exp_month' => $month,
+		'exp_year'  => $year,
+	);
+}
+
+/**
+ * Create a Stripe card PaymentMethod from raw card fields and attach it to a Customer.
+ *
+ * In test mode (sk_test_…), common Stripe test card numbers are converted to official test
+ * tokens (tok_visa, etc.) and sent as card[token], so raw PAN is not sent to Stripe when
+ * raw card data APIs are disabled on the account.
+ *
+ * PCI: handling PAN/CVC on your server has strict requirements in live mode. Disable with the
+ * filter `arsenal_settings_allow_create_payment_with_card_fields` when not allowed.
+ *
+ * @param string $customer_id Stripe Customer id cus_….
+ * @param array  $card {
+ *     @type string $number          Card number (digits only).
+ *     @type int    $exp_month       1–12.
+ *     @type int    $exp_year        Four-digit year.
+ *     @type string $cvc             CVC digits.
+ *     @type string $cardholder_name Optional.
+ *     @type string $postal_code     Optional billing postal / ZIP.
+ * }
+ * @return string|WP_Error pm_… on success.
+ */
+function arsenal_settings_stripe_create_and_attach_card_payment_method( $customer_id, array $card ) {
+	if ( ! preg_match( '/^cus_[a-zA-Z0-9]+$/', (string) $customer_id ) ) {
+		return new WP_Error(
+			'invalid_customer',
+			__( 'Invalid customer for PaymentMethod attach.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$number = (string) $card['number'];
+	$month  = (int) $card['exp_month'];
+	$year   = (int) $card['exp_year'];
+	$cvc    = (string) $card['cvc'];
+	$name   = isset( $card['cardholder_name'] ) ? trim( (string) $card['cardholder_name'] ) : '';
+	$postal = isset( $card['postal_code'] ) ? trim( (string) $card['postal_code'] ) : '';
+
+	$test_tok = arsenal_settings_stripe_test_token_for_card_digits( $number );
+	if ( $test_tok !== '' && preg_match( '/^tok_[a-zA-Z0-9]+$/', $test_tok ) ) {
+		$body = array(
+			'type' => 'card',
+			'card' => array(
+				'token' => $test_tok,
+			),
+		);
+	} else {
+		$body = array(
+			'type' => 'card',
+			'card' => array(
+				'number'    => $number,
+				'exp_month' => $month,
+				'exp_year'  => $year,
+				'cvc'       => $cvc,
+			),
+		);
+	}
+
+	if ( $name !== '' || $postal !== '' ) {
+		$bd = array();
+		if ( $name !== '' ) {
+			$bd['name'] = function_exists( 'mb_substr' ) ? mb_substr( $name, 0, 256 ) : substr( $name, 0, 256 );
+		}
+		if ( $postal !== '' ) {
+			$bd['address'] = array(
+				'postal_code' => function_exists( 'mb_substr' ) ? mb_substr( $postal, 0, 20 ) : substr( $postal, 0, 20 ),
+			);
+		}
+		$body['billing_details'] = $bd;
+	}
+
+	$created = arsenal_settings_stripe_api_post( 'payment_methods', $body );
+	if ( is_wp_error( $created ) ) {
+		return $created;
+	}
+
+	$pm_id = isset( $created['id'] ) ? (string) $created['id'] : '';
+	if ( $pm_id === '' || ! preg_match( '/^pm_[a-zA-Z0-9]+$/', $pm_id ) ) {
+		return new WP_Error(
+			'stripe_invalid_response',
+			__( 'Stripe did not return a PaymentMethod id.', 'arsenal-settings' ),
+			array( 'status' => 502 )
+		);
+	}
+
+	$attached = arsenal_settings_stripe_api_post(
+		'payment_methods/' . rawurlencode( $pm_id ) . '/attach',
+		array( 'customer' => $customer_id )
+	);
+	if ( is_wp_error( $attached ) ) {
+		return $attached;
+	}
+
+	return $pm_id;
+}
+
+/**
  * Pay an open Stripe invoice (server-side), e.g. first subscription invoice.
  *
  * @param string $invoice_id Invoice id in_….
@@ -427,6 +622,149 @@ function arsenal_settings_stripe_invoice_pay( $invoice_id, $payment_method_id ) 
 		$body['payment_method'] = (string) $payment_method_id;
 	}
 	return arsenal_settings_stripe_api_post( 'invoices/' . rawurlencode( (string) $invoice_id ) . '/pay', $body );
+}
+
+/**
+ * Create a Stripe PaymentIntent (one-off payment).
+ *
+ * Always sets capture_method to automatic (authorize and capture in one step; no separate capture call).
+ *
+ * @see https://docs.stripe.com/api/payment_intents/create
+ *
+ * @param array $args {
+ *     @type string $customer         Stripe Customer id cus_… (required).
+ *     @type int    $amount           Amount in smallest currency unit (positive integer).
+ *     @type string $currency         Three-letter ISO code (e.g. gbp).
+ *     @type string $payment_method   pm_… When empty, automatic_payment_methods is used (client-side collection).
+ *     @type string $description      Optional statement description.
+ *     @type string $receipt_email     Optional receipt email.
+ *     @type bool   $confirm          When payment_method is set, whether to confirm immediately (default true).
+ *     @type bool   $off_session      When confirming without setup_future_usage, merchant-initiated flag (default true).
+ *                                      When setup_future_usage is set, off_session is forced false (Stripe API requirement).
+ *     @type string $setup_future_usage When payment_method is set: off_session (default) or on_session to save the
+ *                                      PaymentMethod on the Customer for reuse; empty string to omit (no save hint).
+ *     @type string $return_url         When confirming with payment_method: URL for redirect-based auth (default home_url).
+ *     @type array  $metadata         Optional string key => scalar value (max 40 keys).
+ * }
+ * @return array|WP_Error
+ */
+function arsenal_settings_stripe_create_payment_intent( array $args ) {
+	$defaults = array(
+		'customer'             => '',
+		'amount'               => 0,
+		'currency'             => '',
+		'payment_method'       => '',
+		'description'          => '',
+		'receipt_email'        => '',
+		'confirm'              => true,
+		'off_session'          => true,
+		'setup_future_usage'   => 'off_session',
+		'return_url'           => '',
+		'metadata'             => array(),
+	);
+	$a = array_merge( $defaults, $args );
+
+	$customer = trim( (string) $a['customer'] );
+	if ( $customer === '' || ! preg_match( '/^cus_[a-zA-Z0-9]+$/', $customer ) ) {
+		return new WP_Error(
+			'invalid_customer',
+			__( 'A valid Stripe Customer id (cus_…) is required for create-payment.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$currency = strtolower( trim( (string) $a['currency'] ) );
+	if ( $currency === '' || ! preg_match( '/^[a-z]{3}$/', $currency ) ) {
+		return new WP_Error(
+			'invalid_currency',
+			__( 'Provide a valid three-letter currency code (for example gbp or usd).', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$amount = (int) $a['amount'];
+	if ( $amount < 1 ) {
+		return new WP_Error(
+			'invalid_amount',
+			__( 'amount must be a positive integer in the smallest currency unit (e.g. pence for GBP).', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$pm = trim( (string) $a['payment_method'] );
+	if ( $pm !== '' && ! preg_match( '/^pm_[a-zA-Z0-9]+$/', $pm ) ) {
+		return new WP_Error(
+			'invalid_payment_method',
+			__( 'payment_method must be a Stripe PaymentMethod id (pm_…).', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$body = array(
+		'amount'           => $amount,
+		'currency'         => $currency,
+		'customer'         => $customer,
+		'capture_method'   => 'automatic',
+		'expand'           => array( 'latest_charge' ),
+	);
+
+	$desc = trim( (string) $a['description'] );
+	if ( $desc !== '' ) {
+		$body['description'] = function_exists( 'mb_substr' ) ? mb_substr( $desc, 0, 1000 ) : substr( $desc, 0, 1000 );
+	}
+
+	$receipt = trim( (string) $a['receipt_email'] );
+	if ( $receipt !== '' && is_email( $receipt ) ) {
+		$body['receipt_email'] = $receipt;
+	}
+
+	if ( is_array( $a['metadata'] ) && ! empty( $a['metadata'] ) ) {
+		$n = 0;
+		foreach ( $a['metadata'] as $mk => $mv ) {
+			if ( $n >= 40 ) {
+				break;
+			}
+			$k = sanitize_key( (string) $mk );
+			if ( $k === '' ) {
+				continue;
+			}
+			$body[ 'metadata[' . $k . ']' ] = is_scalar( $mv ) ? substr( (string) $mv, 0, 500 ) : '';
+			++$n;
+		}
+	}
+
+	if ( $pm !== '' ) {
+		$body['payment_method'] = $pm;
+		$sfu = isset( $a['setup_future_usage'] ) ? trim( (string) $a['setup_future_usage'] ) : 'off_session';
+		if ( $sfu !== '' && in_array( $sfu, array( 'off_session', 'on_session' ), true ) ) {
+			$body['setup_future_usage'] = $sfu;
+		}
+		$do_confirm = (bool) $a['confirm'];
+		if ( $do_confirm ) {
+			$body['confirm'] = 'true';
+			// Stripe rejects confirm + off_session=true together with setup_future_usage (save PM for later).
+			if ( isset( $body['setup_future_usage'] ) ) {
+				$body['off_session'] = 'false';
+			} else {
+				$body['off_session'] = ! empty( $a['off_session'] ) ? 'true' : 'false';
+			}
+			// Redirect-based dashboard PMs may require return_url when confirming; default to site home.
+			$ru = isset( $a['return_url'] ) ? trim( (string) $a['return_url'] ) : '';
+			if ( $ru === '' && function_exists( 'home_url' ) ) {
+				$ru = (string) apply_filters( 'arsenal_settings_stripe_payment_intent_return_url', home_url( '/' ) );
+			}
+			if ( $ru !== '' ) {
+				$body['return_url'] = $ru;
+			}
+		}
+	} else {
+		$body['automatic_payment_methods'] = array(
+			'enabled'          => 'true',
+			'allow_redirects'  => 'never',
+		);
+	}
+
+	return arsenal_settings_stripe_api_post( 'payment_intents', $body );
 }
 
 /**
@@ -1010,6 +1348,103 @@ function arsenal_settings_register_rest_routes() {
 			),
 		)
 	);
+
+	register_rest_route(
+		ARSENAL_SETTINGS_REST_NAMESPACE,
+		'/create-payment',
+		array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => 'arsenal_settings_rest_create_payment',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'customer'               => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'customer_email'         => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_email',
+				),
+				'customer_name'          => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'amount'                 => array(
+					'required' => true,
+					'type'     => 'integer',
+				),
+				'currency'               => array(
+					'required'          => true,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'payment_method'         => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'payment_method_id'      => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'card_number'            => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'card_expiry'            => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'card_cvc'               => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'cardholder_name'        => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'billing_postal_code'    => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'description'            => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'receipt_email'          => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_email',
+				),
+				'setup_future_usage'     => array(
+					'required'          => false,
+					'type'              => 'string',
+					'enum'              => array( 'off_session', 'on_session' ),
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'return_url'             => array(
+					'required'          => false,
+					'type'              => 'string',
+					'format'            => 'uri',
+					'sanitize_callback' => 'esc_url_raw',
+				),
+				'metadata'               => array(
+					'required' => false,
+					'type'     => 'object',
+				),
+			),
+		)
+	);
 }
 add_action( 'rest_api_init', 'arsenal_settings_register_rest_routes' );
 
@@ -1036,11 +1471,13 @@ function arsenal_settings_rest_from_wp_error( WP_Error $error ) {
 /**
  * Resolve Stripe customer id from REST params (same rules as create-subscription).
  *
- * @param string $raw_customer Trimmed "customer" param.
- * @param string $email        Trimmed "customer_email" param.
+ * @param string $raw_customer              Trimmed "customer" param.
+ * @param string $email                     Trimmed "customer_email" param.
+ * @param bool   $create_if_missing_email   When true and email is valid but no Customer exists, creates one via Stripe API.
+ * @param string $create_display_name       Optional name for new Customer (used only when creating).
  * @return string|WP_Error cus_… or WP_Error (data.status set for HTTP mapping).
  */
-function arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email ) {
+function arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email, $create_if_missing_email = false, $create_display_name = '' ) {
 	if ( $raw_customer !== '' && preg_match( '/^cus_[a-zA-Z0-9]+$/', $raw_customer ) ) {
 		return $raw_customer;
 	}
@@ -1057,6 +1494,20 @@ function arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email ) {
 			return $looked;
 		}
 		if ( $looked === '' ) {
+			if ( $create_if_missing_email ) {
+				$created = arsenal_settings_stripe_create_customer( $email, $create_display_name );
+				if ( is_wp_error( $created ) ) {
+					return $created;
+				}
+				if ( ! empty( $created['id'] ) && is_string( $created['id'] ) && preg_match( '/^cus_[a-zA-Z0-9]+$/', $created['id'] ) ) {
+					return (string) $created['id'];
+				}
+				return new WP_Error(
+					'stripe_invalid_response',
+					__( 'Stripe did not return a valid Customer id after customer creation.', 'arsenal-settings' ),
+					array( 'status' => 502 )
+				);
+			}
 			return new WP_Error(
 				'stripe_customer_not_found',
 				__( 'No Stripe customer exists for that email. Create a customer in Stripe (Dashboard or API) first, then retry or pass "customer" as cus_….', 'arsenal-settings' ),
@@ -1595,4 +2046,292 @@ function arsenal_settings_rest_create_recurring_subscription( WP_REST_Request $r
 		),
 		400
 	);
+}
+
+/**
+ * REST callback: create-payment — creates a Stripe PaymentIntent (one-off charge) for a customer.
+ *
+ * POST JSON or form body:
+ * - customer (optional): Stripe Customer id cus_…
+ * - customer_email (optional): looks up cus_… when customer is omitted; if none exists, a new Stripe Customer is created for that email
+ * - customer_name (optional): display name when auto-creating a Customer from customer_email
+ * - amount (required): integer, smallest currency unit (e.g. pence)
+ * - currency (required): e.g. gbp, usd
+ * - payment_method_id (optional if customer already has a saved pm_… or sends card fields): Stripe PaymentMethod id pm_…
+ *   Alias: payment_method (same value).
+ * - card_number, card_expiry, card_cvc (optional together): when no pm_… and no saved card, these create a Stripe PaymentMethod
+ *   server-side and attach it to the customer, then charge. Optional: cardholder_name, billing_postal_code.
+ *   With sk_test_…, standard test numbers (e.g. 4242424242424242) use Stripe test tokens (tok_visa) so raw card APIs need not be enabled.
+ *   Filter `arsenal_settings_allow_create_payment_with_card_fields` (default true) can be set false to forbid raw card fields.
+ *   On payment_method_required, the JSON lists fields_to_enter if nothing usable was sent.
+ *   HTTP 201 is returned only when the PaymentIntent status is succeeded; otherwise HTTP 402 with payment_intent details.
+ * - setup_future_usage (optional): off_session (default) or on_session; sent on the PaymentIntent when a PaymentMethod is used
+ *   so Stripe persists it on the Customer for future charges. Stripe requires on-session confirmation with this flag, so the
+ *   plugin sends off_session=false on confirm when setup_future_usage is present (even for server-side confirm).
+ * - return_url (optional): HTTPS URL Stripe may use after redirect-based authentication; defaults to the site home URL.
+ * - description (optional)
+ * - receipt_email (optional)
+ * - metadata (optional): object of string key => string value (max 40 keys)
+ *
+ * @param WP_REST_Request $request Request.
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_create_payment( WP_REST_Request $request ) {
+	$raw_customer = trim( (string) $request->get_param( 'customer' ) );
+	$email        = trim( (string) $request->get_param( 'customer_email' ) );
+	$customer_name = trim( (string) $request->get_param( 'customer_name' ) );
+
+	$customer_res = arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email, true, $customer_name );
+	if ( is_wp_error( $customer_res ) ) {
+		return arsenal_settings_rest_from_wp_error( $customer_res );
+	}
+	$customer_id = $customer_res;
+
+	$amount   = (int) $request->get_param( 'amount' );
+	$currency = (string) $request->get_param( 'currency' );
+
+	$pm_request = trim( (string) $request->get_param( 'payment_method_id' ) );
+	if ( $pm_request === '' ) {
+		$pm_request = trim( (string) $request->get_param( 'payment_method' ) );
+	}
+	if ( $pm_request !== '' && ! preg_match( '/^pm_[a-zA-Z0-9]+$/', $pm_request ) ) {
+		return new WP_REST_Response(
+			array(
+				'message' => __( 'payment_method_id (or payment_method) must be a Stripe PaymentMethod id (pm_…).', 'arsenal-settings' ),
+				'status'  => false,
+				'code'    => 'invalid_payment_method_format',
+			),
+			400
+		);
+	}
+
+	$card_number = trim( (string) $request->get_param( 'card_number' ) );
+	$card_expiry = trim( (string) $request->get_param( 'card_expiry' ) );
+	$card_cvc    = trim( (string) $request->get_param( 'card_cvc' ) );
+	$any_card    = ( $card_number !== '' || $card_expiry !== '' || $card_cvc !== '' );
+
+	if ( $pm_request === '' && $any_card ) {
+		$allow_raw = (bool) apply_filters( 'arsenal_settings_allow_create_payment_with_card_fields', true );
+		if ( ! $allow_raw ) {
+			return new WP_REST_Response(
+				array(
+					'message' => __( 'Raw card fields on create-payment are disabled. Use payment_method_id from Stripe.js, or allow this path with the arsenal_settings_allow_create_payment_with_card_fields filter.', 'arsenal-settings' ),
+					'status'  => false,
+					'code'    => 'raw_card_disabled',
+				),
+				400
+			);
+		}
+
+		$missing = array();
+		if ( $card_number === '' ) {
+			$missing[] = 'card_number';
+		}
+		if ( $card_expiry === '' ) {
+			$missing[] = 'card_expiry';
+		}
+		if ( $card_cvc === '' ) {
+			$missing[] = 'card_cvc';
+		}
+		if ( ! empty( $missing ) ) {
+			return new WP_REST_Response(
+				array(
+					'message'             => __( 'Incomplete card details: send card_number, card_expiry, and card_cvc together.', 'arsenal-settings' ),
+					'status'              => false,
+					'code'                => 'incomplete_card_details',
+					'missing_field_names' => $missing,
+				),
+				400
+			);
+		}
+
+		$digits = preg_replace( '/\D+/', '', $card_number );
+		if ( strlen( $digits ) < 12 || strlen( $digits ) > 19 ) {
+			return new WP_REST_Response(
+				array(
+					'message' => __( 'card_number must contain 12–19 digits.', 'arsenal-settings' ),
+					'status'  => false,
+					'code'    => 'invalid_card_number',
+				),
+				400
+			);
+		}
+
+		$parsed = arsenal_settings_parse_card_expiry( $card_expiry );
+		if ( null === $parsed ) {
+			return new WP_REST_Response(
+				array(
+					'message' => __( 'card_expiry could not be parsed. Use MM/YY or MM/YYYY (for example 12/2029).', 'arsenal-settings' ),
+					'status'  => false,
+					'code'    => 'invalid_card_expiry',
+				),
+				400
+			);
+		}
+
+		$cvc_digits = preg_replace( '/\D+/', '', $card_cvc );
+		if ( strlen( $cvc_digits ) < 3 || strlen( $cvc_digits ) > 4 ) {
+			return new WP_REST_Response(
+				array(
+					'message' => __( 'card_cvc must be 3 or 4 digits.', 'arsenal-settings' ),
+					'status'  => false,
+					'code'    => 'invalid_card_cvc',
+				),
+				400
+			);
+		}
+
+		$cardholder = trim( (string) $request->get_param( 'cardholder_name' ) );
+		$postal     = trim( (string) $request->get_param( 'billing_postal_code' ) );
+
+		$pm_from_card = arsenal_settings_stripe_create_and_attach_card_payment_method(
+			$customer_id,
+			array(
+				'number'          => $digits,
+				'exp_month'       => $parsed['exp_month'],
+				'exp_year'        => $parsed['exp_year'],
+				'cvc'             => $cvc_digits,
+				'cardholder_name' => $cardholder,
+				'postal_code'     => $postal,
+			)
+		);
+		if ( is_wp_error( $pm_from_card ) ) {
+			return arsenal_settings_rest_from_wp_error( $pm_from_card );
+		}
+		$pm_request = $pm_from_card;
+	}
+
+	$pm_saved = '';
+	if ( $pm_request === '' ) {
+		$pm_saved = arsenal_settings_stripe_resolve_payment_method_for_charge( $customer_id, array() );
+	}
+
+	if ( $amount >= 1 && $pm_request === '' && $pm_saved === '' ) {
+		$fields_to_enter = array(
+			array(
+				'name'     => 'card_number',
+				'label'    => __( 'Card number', 'arsenal-settings' ),
+				'required' => true,
+			),
+			array(
+				'name'     => 'card_expiry',
+				'label'    => __( 'Expiry date (MM / YY)', 'arsenal-settings' ),
+				'required' => true,
+			),
+			array(
+				'name'     => 'card_cvc',
+				'label'    => __( 'Security code (CVC)', 'arsenal-settings' ),
+				'required' => true,
+			),
+			array(
+				'name'     => 'cardholder_name',
+				'label'    => __( 'Name on card', 'arsenal-settings' ),
+				'required' => false,
+			),
+			array(
+				'name'     => 'billing_postal_code',
+				'label'    => __( 'Billing postal or ZIP code', 'arsenal-settings' ),
+				'required' => false,
+			),
+		);
+
+		return new WP_REST_Response(
+			array(
+				'message' => __( 'No saved payment method: send card_number, card_expiry, and card_cvc together, or payment_method_id (pm_…).', 'arsenal-settings' ),
+				'status'  => false,
+				'code'    => 'payment_method_required',
+				'fields_to_enter'     => $fields_to_enter,
+				'field_names_to_enter' => array_map(
+					static function ( $row ) {
+						return $row['name'];
+					},
+					$fields_to_enter
+				),
+				'request_field_after_token' => array(
+					'primary' => 'payment_method_id',
+					'aliases' => array( 'payment_method' ),
+					'format'  => 'pm_*',
+				),
+			),
+			400
+		);
+	}
+
+	$pm = $pm_request !== '' ? $pm_request : $pm_saved;
+
+	$metadata = $request->get_param( 'metadata' );
+	if ( ! is_array( $metadata ) ) {
+		$metadata = array();
+	}
+
+	// One-off charge: confirm with a pm when present; off_session on the PI follows Stripe rules inside create_payment_intent.
+	$confirm     = ( $pm !== '' );
+	$off_session = ( $pm !== '' );
+
+	$intent_args = array(
+		'customer'       => $customer_id,
+		'amount'         => $amount,
+		'currency'       => $currency,
+		'payment_method' => $pm,
+		'description'    => (string) $request->get_param( 'description' ),
+		'receipt_email'  => (string) $request->get_param( 'receipt_email' ),
+		'confirm'        => $confirm,
+		'off_session'    => $off_session,
+		'metadata'       => $metadata,
+	);
+	$setup_fu = $request->get_param( 'setup_future_usage' );
+	if ( null !== $setup_fu && $setup_fu !== '' ) {
+		$intent_args['setup_future_usage'] = trim( (string) $setup_fu );
+	}
+	$return_u = $request->get_param( 'return_url' );
+	if ( null !== $return_u && trim( (string) $return_u ) !== '' ) {
+		$intent_args['return_url'] = trim( (string) $return_u );
+	}
+
+	$result = arsenal_settings_stripe_create_payment_intent( $intent_args );
+
+	if ( is_wp_error( $result ) ) {
+		return arsenal_settings_rest_from_wp_error( $result );
+	}
+
+	$pi_status     = isset( $result['status'] ) ? (string) $result['status'] : '';
+	$client_secret = isset( $result['client_secret'] ) ? (string) $result['client_secret'] : null;
+
+	$pi_payload = array(
+		'id'            => isset( $result['id'] ) ? (string) $result['id'] : '',
+		'status'        => $pi_status,
+		'amount'        => isset( $result['amount'] ) ? (int) $result['amount'] : $amount,
+		'currency'      => isset( $result['currency'] ) ? (string) $result['currency'] : strtolower( trim( $currency ) ),
+		'customer'      => isset( $result['customer'] ) ? $result['customer'] : $customer_id,
+		'client_secret' => $client_secret,
+	);
+
+	if ( ! empty( $result['latest_charge'] ) ) {
+		if ( is_string( $result['latest_charge'] ) && preg_match( '/^ch_/', $result['latest_charge'] ) ) {
+			$pi_payload['latest_charge_id'] = $result['latest_charge'];
+		} elseif ( is_array( $result['latest_charge'] ) && ! empty( $result['latest_charge']['id'] ) ) {
+			$pi_payload['latest_charge_id'] = (string) $result['latest_charge']['id'];
+		}
+	}
+
+	if ( 'succeeded' !== $pi_status ) {
+		return new WP_REST_Response(
+			array(
+				'message' => __( 'Payment did not complete with status succeeded. Use a valid pm_…, ensure the card supports off-session charges, or complete any required authentication using client_secret.', 'arsenal-settings' ),
+				'status'         => false,
+				'code'           => 'payment_not_succeeded',
+				'payment_intent' => $pi_payload,
+			),
+			402
+		);
+	}
+
+	$body = array(
+		'message'        => __( 'Payment succeeded.', 'arsenal-settings' ),
+		'status'         => true,
+		'code'           => 'payment_succeeded',
+		'payment_intent' => $pi_payload,
+	);
+
+	return new WP_REST_Response( $body, 201 );
 }
