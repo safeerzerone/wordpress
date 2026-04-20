@@ -1351,6 +1351,80 @@ function arsenal_settings_register_rest_routes() {
 
 	register_rest_route(
 		ARSENAL_SETTINGS_REST_NAMESPACE,
+		'/create-recurring-subscription-by-email',
+		array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => 'arsenal_settings_rest_create_recurring_subscription_by_email',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'customer_email'         => array(
+					'required'          => true,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_email',
+				),
+				'price'                  => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'currency'               => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'unit_amount'            => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+				'interval'               => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'interval_count'         => array(
+					'required' => false,
+					'type'     => 'integer',
+					'default'  => 1,
+				),
+				'product'                => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'product_name'           => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'quantity'               => array(
+					'required' => false,
+					'type'     => 'integer',
+					'default'  => 1,
+				),
+				'default_payment_method' => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'payment_behavior'       => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'billing_cycle_anchor'   => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+				'trial_period_days'      => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+			),
+		)
+	);
+
+	register_rest_route(
+		ARSENAL_SETTINGS_REST_NAMESPACE,
 		'/create-payment',
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
@@ -1962,6 +2036,8 @@ function arsenal_settings_rest_create_subscription_custom( WP_REST_Request $requ
 /**
  * REST callback: create-recurring-subscription — puts a Stripe Customer on a recurring billing schedule (Subscription).
  *
+ * For email-only clients, use POST …/create-recurring-subscription-by-email (requires customer_email; same plan and payment fields).
+ *
  * Stripe models ongoing charges as a **Subscription** (recurring invoices / PaymentIntents). This endpoint is the
  * single entry point: use a catalog **price** (price_…), *or* define **currency**, **unit_amount**, **interval** plus
  * **product** or **product_name** for a custom recurring amount (Product is created in Stripe when needed).
@@ -2046,6 +2122,32 @@ function arsenal_settings_rest_create_recurring_subscription( WP_REST_Request $r
 		),
 		400
 	);
+}
+
+/**
+ * REST callback: create-recurring-subscription-by-email — same as create-recurring-subscription but customer is resolved only from customer_email.
+ *
+ * Looks up the Stripe Customer by email (no auto-create; create the Customer in Stripe first if missing). Ignores any "customer" body field.
+ *
+ * @param WP_REST_Request $request Request.
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_create_recurring_subscription_by_email( WP_REST_Request $request ) {
+	$email = trim( (string) $request->get_param( 'customer_email' ) );
+	if ( ! is_email( $email ) ) {
+		return new WP_REST_Response(
+			array(
+				'message' => __( 'Provide a valid customer_email.', 'arsenal-settings' ),
+				'status'  => false,
+				'code'    => 'invalid_customer_email',
+			),
+			400
+		);
+	}
+	$request->set_param( 'customer', '' );
+	$request->set_param( 'customer_email', $email );
+
+	return arsenal_settings_rest_create_recurring_subscription( $request );
 }
 
 /**
