@@ -19,17 +19,20 @@ define( 'ARSENAL_SETTINGS_REST_NAMESPACE', 'arsenal-settings/v1' );
 /**
  * Stripe secret key (test or live sk_…).
  *
- * Add to wp-config.php: define( 'ARSENAL_STRIPE_SECRET_KEY', 'sk_test_...' );
- * Or use the filter: arsenal_stripe_secret_key
+ * Priority: (1) value saved under Settings → Arsenal Stripe, (2) wp-config.php constant ARSENAL_STRIPE_SECRET_KEY if set,
+ * (3) filter arsenal_stripe_secret_key (receives the value from previous steps).
  *
  * @return string
  */
 function arsenal_settings_get_stripe_secret_key() {
-	if ( defined( 'ARSENAL_STRIPE_SECRET_KEY' ) && constant( 'ARSENAL_STRIPE_SECRET_KEY' ) ) {
-		return (string) constant( 'ARSENAL_STRIPE_SECRET_KEY' );
+	$saved = get_option( 'arsenal_settings_stripe_secret_key', '' );
+	$key   = is_string( $saved ) ? trim( $saved ) : '';
+
+	if ( $key === '' && defined( 'ARSENAL_STRIPE_SECRET_KEY' ) && constant( 'ARSENAL_STRIPE_SECRET_KEY' ) ) {
+		$key = (string) constant( 'ARSENAL_STRIPE_SECRET_KEY' );
 	}
 
-	return (string) apply_filters( 'arsenal_stripe_secret_key', '' );
+	return (string) apply_filters( 'arsenal_stripe_secret_key', $key );
 }
 
 /**
@@ -89,7 +92,7 @@ function arsenal_settings_stripe_api_get( $path ) {
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -145,7 +148,7 @@ function arsenal_settings_stripe_api_post( $path, array $body ) {
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -308,7 +311,7 @@ function arsenal_settings_stripe_find_customer_id_by_email( $email ) {
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -843,7 +846,7 @@ function arsenal_settings_stripe_create_subscription( $customer_id, $price_id, $
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Define ARSENAL_STRIPE_SECRET_KEY in wp-config.php or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -913,7 +916,7 @@ function arsenal_settings_stripe_create_product( $name ) {
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Define ARSENAL_STRIPE_SECRET_KEY in wp-config.php or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -988,7 +991,7 @@ function arsenal_settings_stripe_create_subscription_inline_price( $customer_id,
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Define ARSENAL_STRIPE_SECRET_KEY in wp-config.php or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -2982,4 +2985,131 @@ function arsenal_settings_rest_create_payment( WP_REST_Request $request ) {
 	);
 
 	return new WP_REST_Response( $body, 201 );
+}
+
+/**
+ * Option name for the Stripe secret key stored in wp_options.
+ */
+function arsenal_settings_stripe_secret_key_option_name() {
+	return 'arsenal_settings_stripe_secret_key';
+}
+
+/**
+ * Sanitize and persist Stripe secret key from Settings → Arsenal Stripe.
+ *
+ * @param mixed $value Submitted value.
+ * @return string Stored key or empty string.
+ */
+function arsenal_settings_sanitize_stripe_secret_key_option( $value ) {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		return (string) get_option( arsenal_settings_stripe_secret_key_option_name(), '' );
+	}
+	if ( isset( $_POST['arsenal_settings_stripe_secret_key_clear'] ) && '1' === (string) wp_unslash( $_POST['arsenal_settings_stripe_secret_key_clear'] ) ) {
+		return '';
+	}
+	$value = is_string( $value ) ? trim( $value ) : '';
+	if ( $value === '' ) {
+		return (string) get_option( arsenal_settings_stripe_secret_key_option_name(), '' );
+	}
+	if ( ! preg_match( '/^sk_(test|live)_[A-Za-z0-9]+$/', $value ) ) {
+		add_settings_error(
+			arsenal_settings_stripe_secret_key_option_name(),
+			'arsenal_stripe_key_invalid',
+			__( 'Stripe secret key must look like sk_test_… or sk_live_… . The previous value was kept.', 'arsenal-settings' ),
+			'error'
+		);
+		return (string) get_option( arsenal_settings_stripe_secret_key_option_name(), '' );
+	}
+	return $value;
+}
+
+/**
+ * Register the Stripe key setting for the Settings API.
+ */
+function arsenal_settings_register_stripe_admin_settings() {
+	register_setting(
+		'arsenal_settings',
+		arsenal_settings_stripe_secret_key_option_name(),
+		array(
+			'type'              => 'string',
+			'sanitize_callback' => 'arsenal_settings_sanitize_stripe_secret_key_option',
+			'default'           => '',
+			'show_in_rest'      => false,
+		)
+	);
+}
+add_action( 'admin_init', 'arsenal_settings_register_stripe_admin_settings' );
+
+/**
+ * Add Settings → Arsenal Stripe.
+ */
+function arsenal_settings_register_stripe_admin_menu() {
+	add_options_page(
+		__( 'Arsenal Stripe', 'arsenal-settings' ),
+		__( 'Arsenal Stripe', 'arsenal-settings' ),
+		'manage_options',
+		'arsenal-settings-stripe',
+		'arsenal_settings_render_stripe_settings_page'
+	);
+}
+add_action( 'admin_menu', 'arsenal_settings_register_stripe_admin_menu' );
+
+/**
+ * Render Settings → Arsenal Stripe.
+ */
+function arsenal_settings_render_stripe_settings_page() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		return;
+	}
+	$opt_name = arsenal_settings_stripe_secret_key_option_name();
+	settings_errors( $opt_name );
+	$has_key = (string) get_option( $opt_name, '' ) !== '';
+	?>
+	<div class="wrap">
+		<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
+		<p class="description">
+			<?php esc_html_e( 'Store your Stripe secret API key here for Arsenal REST endpoints. When a key is saved, it is used before any wp-config.php constant.', 'arsenal-settings' ); ?>
+		</p>
+		<form action="<?php echo esc_url( admin_url( 'options.php' ) ); ?>" method="post">
+			<?php settings_fields( 'arsenal_settings' ); ?>
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row">
+						<label for="<?php echo esc_attr( $opt_name ); ?>"><?php esc_html_e( 'Secret key', 'arsenal-settings' ); ?></label>
+					</th>
+					<td>
+						<input
+							name="<?php echo esc_attr( $opt_name ); ?>"
+							type="password"
+							id="<?php echo esc_attr( $opt_name ); ?>"
+							class="regular-text code"
+							value=""
+							autocomplete="new-password"
+							spellcheck="false"
+						/>
+						<p class="description">
+							<?php
+							if ( $has_key ) {
+								esc_html_e( 'A key is already saved. Enter a new key to replace it. Leave the field empty to keep the current key.', 'arsenal-settings' );
+							} else {
+								esc_html_e( 'Enter sk_test_… or sk_live_… from the Stripe Dashboard (Developers → API keys).', 'arsenal-settings' );
+							}
+							?>
+						</p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Remove key', 'arsenal-settings' ); ?></th>
+					<td>
+						<label>
+							<input name="arsenal_settings_stripe_secret_key_clear" type="checkbox" value="1" />
+							<?php esc_html_e( 'Remove stored Stripe secret key from the database', 'arsenal-settings' ); ?>
+						</label>
+					</td>
+				</tr>
+			</table>
+			<?php submit_button( __( 'Save changes', 'arsenal-settings' ) ); ?>
+		</form>
+	</div>
+	<?php
 }

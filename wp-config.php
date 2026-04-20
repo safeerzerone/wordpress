@@ -57,7 +57,7 @@ define( 'SECURE_AUTH_SALT', '&C*M%F*tE09:/kfBc1O6GM|r509(I57J29L$zb?S|d`QYya)_wq
 define( 'LOGGED_IN_SALT',   'u+0(TRJ5?wdON*~+KS@581=3]JJyRg49PB0A!qTUk.Q*E6v{Q2SoihNjny}R/>#=' );
 define( 'NONCE_SALT',       'xnLzWY^O=uXt9 ltGEjxh4:60x:Q4iB{.@^nFGZaMWM{qP^D7zd [8]f[gl7ex$n' );
 
-define( 'ARSENAL_STRIPE_SECRET_KEY', 'sk_test_51TCvdTGvz5b3dvSRUAmcAPlFwbq2Af3nZ25bH5Sa6MdnX8GzZuQZatRw479WcvGTOHDmNH7fFudvgQ8J23pSHp2T00TofNbZzL' );
+// define( 'ARSENAL_STRIPE_SECRET_KEY', 'sk_test_51TCvdTGvz5b3dvSRUAmcAPlFwbq2Af3nZ25bH5Sa6MdnX8GzZuQZatRw479WcvGTOHDmNH7fFudvgQ8J23pSHp2T00TofNbZzL' );
 /**#@-*/
 
 /**
