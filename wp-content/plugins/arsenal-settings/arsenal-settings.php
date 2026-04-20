@@ -1425,6 +1425,55 @@ function arsenal_settings_register_rest_routes() {
 
 	register_rest_route(
 		ARSENAL_SETTINGS_REST_NAMESPACE,
+		'/create-recurring-subscription-by-armember-plan',
+		array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => 'arsenal_settings_rest_create_recurring_subscription_by_armember_plan',
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'customer_email'         => array(
+					'required'          => true,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_email',
+				),
+				'armember_plan_id'       => array(
+					'required' => true,
+					'type'     => 'integer',
+				),
+				'payment_cycle'          => array(
+					'required' => false,
+					'type'     => 'integer',
+					'default'  => 0,
+				),
+				'quantity'               => array(
+					'required' => false,
+					'type'     => 'integer',
+					'default'  => 1,
+				),
+				'default_payment_method' => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'payment_behavior'       => array(
+					'required'          => false,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'billing_cycle_anchor'   => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+				'trial_period_days'      => array(
+					'required' => false,
+					'type'     => 'integer',
+				),
+			),
+		)
+	);
+
+	register_rest_route(
+		ARSENAL_SETTINGS_REST_NAMESPACE,
 		'/create-payment',
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
@@ -1595,6 +1644,215 @@ function arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email, $c
 		'missing_customer',
 		__( 'Provide either "customer" (Stripe id cus_…) or a valid "customer_email" to identify the Stripe customer.', 'arsenal-settings' ),
 		array( 'status' => 400 )
+	);
+}
+
+/**
+ * Convert ARMember plan amount (major currency units) to Stripe unit_amount (smallest currency unit).
+ *
+ * @param float|string $major    Plan amount as stored by ARMember.
+ * @param string       $currency Three-letter ISO currency (upper or lower case).
+ * @return int Positive integer or 0 if invalid.
+ */
+function arsenal_settings_armember_major_amount_to_stripe_unit_amount( $major, $currency ) {
+	$currency = strtoupper( trim( (string) $currency ) );
+	$major_f   = (float) $major;
+	if ( $currency === '' || $major_f <= 0 ) {
+		return 0;
+	}
+	$zero_decimal = apply_filters(
+		'arsenal_settings_stripe_zero_decimal_currencies',
+		array( 'BIF', 'DJF', 'JPY', 'KRW', 'PYG', 'VND', 'XAF', 'XPF', 'CLP', 'GNF', 'KMF', 'MGA', 'RWF', 'VUV', 'XOF', 'UGX' )
+	);
+	if ( in_array( $currency, $zero_decimal, true ) ) {
+		return max( 1, (int) round( $major_f ) );
+	}
+	$decimals = 2;
+	if ( isset( $GLOBALS['arm_global_settings']->global_settings['arm_currency_decimal_digit'] ) ) {
+		$d = (int) $GLOBALS['arm_global_settings']->global_settings['arm_currency_decimal_digit'];
+		if ( $d >= 0 && $d <= 6 ) {
+			$decimals = $d;
+		}
+	}
+	$mult = (int) pow( 10, $decimals );
+	return max( 1, (int) round( $major_f * $mult ) );
+}
+
+/**
+ * Map ARMember trial block (from ARM_Plan::prepare_recurring_data) to Stripe trial_period_days (approximate for month/year).
+ *
+ * @param array $trial Trial subset from recurring data.
+ * @return int|null Days 1–730, or null when not applicable.
+ */
+function arsenal_settings_armember_trial_to_trial_period_days( array $trial ) {
+	if ( empty( $trial['interval'] ) ) {
+		return null;
+	}
+	$interval = (int) $trial['interval'];
+	$period   = isset( $trial['period'] ) ? strtoupper( (string) $trial['period'] ) : 'M';
+	$days     = 0;
+	switch ( $period ) {
+		case 'D':
+			$days = $interval;
+			break;
+		case 'W':
+			$days = $interval * 7;
+			break;
+		case 'M':
+			$days = $interval * 30;
+			break;
+		case 'Y':
+			$days = $interval * 365;
+			break;
+		default:
+			return null;
+	}
+	if ( $days < 1 ) {
+		return null;
+	}
+	return min( 730, $days );
+}
+
+/**
+ * Load an ARMember subscription plan and build Stripe inline price fields (currency, unit_amount, interval, etc.).
+ *
+ * @param int $plan_id        ARMember arm_subscription_plan_id.
+ * @param int $payment_cycle  Index into payment_cycles when the plan uses multiple cycles; default 0.
+ * @return array|WP_Error {
+ *     @type array $inline               Arguments for arsenal_settings_stripe_create_subscription_inline_price.
+ *     @type int|null $trial_period_days Suggested Stripe trial length when the plan has a trial (approximate for M/Y).
+ *     @type string $plan_name           Plan display name (for debugging / filters).
+ * }
+ */
+function arsenal_settings_rest_resolve_armember_plan_for_stripe_inline( $plan_id, $payment_cycle = 0 ) {
+	if ( ! class_exists( 'ARM_Plan' ) ) {
+		return new WP_Error(
+			'armember_inactive',
+			__( 'ARMember is not active or its plan classes are not loaded.', 'arsenal-settings' ),
+			array( 'status' => 503 )
+		);
+	}
+	$plan_id = (int) $plan_id;
+	if ( $plan_id < 1 ) {
+		return new WP_Error(
+			'invalid_armember_plan_id',
+			__( 'armember_plan_id must be a positive integer.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+	$plan = new ARM_Plan( $plan_id );
+	if ( ! $plan->exists() ) {
+		return new WP_Error(
+			'armember_plan_not_found',
+			__( 'No ARMember subscription plan exists for that armember_plan_id.', 'arsenal-settings' ),
+			array( 'status' => 404 )
+		);
+	}
+	if ( method_exists( $plan, 'is_deleted' ) && $plan->is_deleted() ) {
+		return new WP_Error(
+			'armember_plan_deleted',
+			__( 'That ARMember plan is deleted.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+	if ( method_exists( $plan, 'is_active' ) && ! $plan->is_active() ) {
+		return new WP_Error(
+			'armember_plan_inactive',
+			__( 'That ARMember plan is not active.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+	if ( ! empty( $plan->isGiftPlan ) ) {
+		return new WP_Error(
+			'armember_plan_not_supported',
+			__( 'Gift ARMember plans cannot be used with this endpoint.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+	if ( ! $plan->is_recurring() ) {
+		return new WP_Error(
+			'armember_plan_not_recurring',
+			__( 'That ARMember plan is not a recurring (subscription) plan. Use a plan with recurring billing only.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	global $arm_payment_gateways;
+	$currency = '';
+	if ( is_object( $arm_payment_gateways ) && method_exists( $arm_payment_gateways, 'arm_get_global_currency' ) ) {
+		$currency = strtolower( trim( (string) $arm_payment_gateways->arm_get_global_currency() ) );
+	}
+	if ( $currency === '' || ! preg_match( '/^[a-z]{3}$/', $currency ) ) {
+		return new WP_Error(
+			'armember_currency_missing',
+			__( 'Could not read ARMember global currency. Set it in ARMember payment settings.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$payment_cycle = (int) $payment_cycle;
+	$rd            = $plan->prepare_recurring_data( $payment_cycle );
+	if ( empty( $rd['amount'] ) || (float) $rd['amount'] <= 0 ) {
+		return new WP_Error(
+			'armember_plan_invalid_amount',
+			__( 'That ARMember plan has no positive recurring amount for the selected payment cycle.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$period = isset( $rd['period'] ) ? strtoupper( (string) $rd['period'] ) : 'M';
+	$map    = array(
+		'D' => 'day',
+		'W' => 'week',
+		'M' => 'month',
+		'Y' => 'year',
+	);
+	if ( ! isset( $map[ $period ] ) ) {
+		return new WP_Error(
+			'armember_plan_invalid_interval',
+			__( 'That ARMember plan uses a billing period Stripe cannot map (expected D, W, M, or Y).', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+	$stripe_interval = $map[ $period ];
+	$interval_count  = isset( $rd['interval'] ) ? max( 1, (int) $rd['interval'] ) : 1;
+
+	$unit_amount = arsenal_settings_armember_major_amount_to_stripe_unit_amount( $rd['amount'], $currency );
+	if ( $unit_amount < 1 ) {
+		return new WP_Error(
+			'armember_plan_invalid_unit_amount',
+			__( 'Could not convert the plan amount to Stripe smallest-currency units.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$name = $plan->name;
+	if ( function_exists( 'mb_substr' ) ) {
+		$name = mb_substr( $name, 0, 500 );
+	} else {
+		$name = substr( $name, 0, 500 );
+	}
+
+	$inline = array(
+		'currency'        => $currency,
+		'unit_amount'     => $unit_amount,
+		'interval'        => $stripe_interval,
+		'interval_count'  => $interval_count,
+		'product'         => '',
+		'product_name'    => $name,
+	);
+
+	$trial_days = null;
+	if ( $plan->has_trial_period() && ! empty( $rd['trial'] ) && is_array( $rd['trial'] ) ) {
+		$trial_days = arsenal_settings_armember_trial_to_trial_period_days( $rd['trial'] );
+	}
+
+	$inline = apply_filters( 'arsenal_settings_armember_plan_stripe_inline', $inline, $plan, $rd, $plan_id, $payment_cycle );
+
+	return array(
+		'inline'              => $inline,
+		'trial_period_days'   => $trial_days,
+		'plan_name'           => $plan->name,
 	);
 }
 
@@ -2037,6 +2295,7 @@ function arsenal_settings_rest_create_subscription_custom( WP_REST_Request $requ
  * REST callback: create-recurring-subscription — puts a Stripe Customer on a recurring billing schedule (Subscription).
  *
  * For email-only clients, use POST …/create-recurring-subscription-by-email (requires customer_email; same plan and payment fields).
+ * For ARMember-driven pricing, use POST …/create-recurring-subscription-by-armember-plan (customer_email + armember_plan_id).
  *
  * Stripe models ongoing charges as a **Subscription** (recurring invoices / PaymentIntents). This endpoint is the
  * single entry point: use a catalog **price** (price_…), *or* define **currency**, **unit_amount**, **interval** plus
@@ -2148,6 +2407,95 @@ function arsenal_settings_rest_create_recurring_subscription_by_email( WP_REST_R
 	$request->set_param( 'customer_email', $email );
 
 	return arsenal_settings_rest_create_recurring_subscription( $request );
+}
+
+/**
+ * REST callback: create-recurring-subscription-by-armember-plan — recurring Stripe subscription from ARMember plan + customer email.
+ *
+ * Resolves currency, amount, and billing interval from the ARMember plan (recurring subscription plans only). Uses the
+ * ARMember global currency. Optional payment_cycle selects a multi-cycle plan row. Trial on the plan maps to
+ * trial_period_days when the request does not send trial_period_days (month/year trials are approximate days).
+ *
+ * @param WP_REST_Request $request Request.
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_create_recurring_subscription_by_armember_plan( WP_REST_Request $request ) {
+	$email = trim( (string) $request->get_param( 'customer_email' ) );
+	if ( ! is_email( $email ) ) {
+		return new WP_REST_Response(
+			array(
+				'message' => __( 'Provide a valid customer_email.', 'arsenal-settings' ),
+				'status'  => false,
+				'code'    => 'invalid_customer_email',
+			),
+			400
+		);
+	}
+
+	$plan_id = (int) $request->get_param( 'armember_plan_id' );
+	if ( $plan_id < 1 ) {
+		return new WP_REST_Response(
+			array(
+				'message' => __( 'Provide a valid armember_plan_id (ARMember subscription plan id).', 'arsenal-settings' ),
+				'status'  => false,
+				'code'    => 'invalid_armember_plan_id',
+			),
+			400
+		);
+	}
+
+	$payment_cycle = $request->get_param( 'payment_cycle' );
+	if ( null === $payment_cycle || '' === $payment_cycle ) {
+		$payment_cycle = 0;
+	}
+	$payment_cycle = max( 0, (int) $payment_cycle );
+
+	$resolved = arsenal_settings_rest_resolve_armember_plan_for_stripe_inline( $plan_id, $payment_cycle );
+	if ( is_wp_error( $resolved ) ) {
+		return arsenal_settings_rest_from_wp_error( $resolved );
+	}
+
+	$parsed = arsenal_settings_rest_parse_subscription_payment_extras( $request );
+	if ( is_wp_error( $parsed ) ) {
+		return arsenal_settings_rest_from_wp_error( $parsed );
+	}
+	$stripe_extra = $parsed['extra'];
+	$stripe_pb    = $parsed['stripe_pb'];
+
+	$sched_err = arsenal_settings_rest_merge_subscription_schedule_to_extra( $request, $stripe_extra );
+	if ( is_wp_error( $sched_err ) ) {
+		return arsenal_settings_rest_from_wp_error( $sched_err );
+	}
+
+	if ( ! $request->has_param( 'trial_period_days' )
+		&& isset( $resolved['trial_period_days'] )
+		&& null !== $resolved['trial_period_days']
+		&& (int) $resolved['trial_period_days'] > 0 ) {
+		$stripe_extra['trial_period_days'] = (int) $resolved['trial_period_days'];
+	}
+
+	$customer_res = arsenal_settings_rest_get_stripe_customer_id( '', $email );
+	if ( is_wp_error( $customer_res ) ) {
+		return arsenal_settings_rest_from_wp_error( $customer_res );
+	}
+	$customer_id = $customer_res;
+
+	$quantity = $request->get_param( 'quantity' );
+	if ( null === $quantity || '' === $quantity ) {
+		$quantity = 1;
+	}
+	$quantity = max( 1, (int) $quantity );
+
+	arsenal_settings_rest_maybe_apply_customer_default_pm( $stripe_extra, $customer_id, $stripe_pb );
+
+	$result = arsenal_settings_stripe_create_subscription_inline_price(
+		$customer_id,
+		$quantity,
+		$resolved['inline'],
+		$stripe_extra
+	);
+
+	return arsenal_settings_rest_subscription_created_response( $result );
 }
 
 /**
