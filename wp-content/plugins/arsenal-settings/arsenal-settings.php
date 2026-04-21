@@ -16,6 +16,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'ARSENAL_SETTINGS_VERSION', '1.0.0' );
 define( 'ARSENAL_SETTINGS_REST_NAMESPACE', 'arsenal-settings/v1' );
 
+/** Relative to uploads base directory; holds NDJSON API logs. */
+define( 'ARSENAL_SETTINGS_API_LOG_SUBDIR', 'arsenal-settings-api-logs' );
+
+/** Max JSON-encoded size per log line (bytes); response/request blobs are trimmed. */
+define( 'ARSENAL_SETTINGS_API_LOG_MAX_LINE_BYTES', 524288 );
+
 /**
  * Stripe secret key (test or live sk_…).
  *
@@ -88,6 +94,7 @@ function arsenal_settings_stripe_test_token_for_card_digits( $digits ) {
  * @return array|WP_Error Decoded JSON object or error.
  */
 function arsenal_settings_stripe_api_get( $path ) {
+	arsenal_settings_api_process_log( 'stripe_api_get', array( 'path' => (string) $path ) );
 	$secret = arsenal_settings_get_stripe_secret_key();
 	if ( '' === $secret ) {
 		return new WP_Error(
@@ -144,6 +151,13 @@ function arsenal_settings_stripe_api_get( $path ) {
  * @return array|WP_Error Decoded JSON object or error.
  */
 function arsenal_settings_stripe_api_post( $path, array $body ) {
+	arsenal_settings_api_process_log(
+		'stripe_api_post',
+		array(
+			'path'      => (string) $path,
+			'body_keys' => array_keys( $body ),
+		)
+	);
 	$secret = arsenal_settings_get_stripe_secret_key();
 	if ( '' === $secret ) {
 		return new WP_Error(
@@ -1649,6 +1663,325 @@ function arsenal_settings_rest_from_wp_error( WP_Error $error ) {
 }
 
 /**
+ * Absolute directory for Arsenal REST API logs (under uploads).
+ *
+ * @return string|WP_Error
+ */
+function arsenal_settings_api_log_dir() {
+	$upload = wp_upload_dir();
+	if ( ! empty( $upload['error'] ) ) {
+		return new WP_Error( 'upload_dir', (string) $upload['error'] );
+	}
+	return trailingslashit( $upload['basedir'] ) . ARSENAL_SETTINGS_API_LOG_SUBDIR;
+}
+
+/**
+ * Create log directory and guard files if missing.
+ *
+ * @return string|WP_Error Absolute path with trailing slash.
+ */
+function arsenal_settings_api_log_ensure_dir() {
+	$dir = arsenal_settings_api_log_dir();
+	if ( is_wp_error( $dir ) ) {
+		return $dir;
+	}
+	if ( ! wp_mkdir_p( $dir ) ) {
+		return new WP_Error( 'mkdir', __( 'Could not create API log directory.', 'arsenal-settings' ) );
+	}
+	$index = trailingslashit( $dir ) . 'index.php';
+	if ( ! file_exists( $index ) ) {
+		file_put_contents( $index, "<?php\n// Silence is golden.\n" );
+	}
+	$ht = trailingslashit( $dir ) . '.htaccess';
+	if ( ! file_exists( $ht ) ) {
+		file_put_contents( $ht, "Options -Indexes\nDeny from all\n" );
+	}
+	return trailingslashit( $dir );
+}
+
+/**
+ * Whether REST API logging for this plugin is enabled.
+ *
+ * @return bool
+ */
+function arsenal_settings_api_logging_enabled() {
+	return (bool) apply_filters( 'arsenal_settings_api_logging_enabled', true );
+}
+
+/**
+ * Keys (substring match, case-insensitive) whose values are redacted in logs.
+ *
+ * @return string[]
+ */
+function arsenal_settings_api_log_sensitive_keys() {
+	$keys = array(
+		'password',
+		'secret',
+		'authorization',
+		'card_number',
+		'card_cvc',
+		'card_expiry',
+		'credit_card',
+		'cvv',
+		'cvc',
+		'stripe_secret',
+		'api_key',
+		'private_key',
+	);
+	return apply_filters( 'arsenal_settings_api_log_sensitive_keys', $keys );
+}
+
+/**
+ * Redact sensitive fields for safe logging (recursive).
+ *
+ * @param mixed $data Data.
+ * @return mixed
+ */
+function arsenal_settings_api_redact_for_log( $data ) {
+	if ( is_string( $data ) ) {
+		if ( preg_match( '/^sk_(test|live)_[A-Za-z0-9]+$/', $data ) ) {
+			return '[redacted_stripe_secret]';
+		}
+		if ( strlen( $data ) > 2000 ) {
+			return substr( $data, 0, 2000 ) . '…[truncated]';
+		}
+		return $data;
+	}
+	if ( ! is_array( $data ) ) {
+		return $data;
+	}
+	$sens = arsenal_settings_api_log_sensitive_keys();
+	$out  = array();
+	foreach ( $data as $k => $v ) {
+		$lk = strtolower( (string) $k );
+		$hit = false;
+		foreach ( $sens as $frag ) {
+			if ( false !== strpos( $lk, strtolower( $frag ) ) ) {
+				$hit = true;
+				break;
+			}
+		}
+		if ( $hit ) {
+			$out[ $k ] = is_scalar( $v ) ? '[redacted]' : '[redacted_non_scalar]';
+			continue;
+		}
+		if ( 'metadata' === $lk && is_array( $v ) ) {
+			$out[ $k ] = arsenal_settings_api_redact_for_log( $v );
+			continue;
+		}
+		$out[ $k ] = is_array( $v ) ? arsenal_settings_api_redact_for_log( $v ) : arsenal_settings_api_redact_for_log( $v );
+	}
+	return $out;
+}
+
+/**
+ * Append a process step to the active Arsenal API log entry (when handling a REST request).
+ *
+ * @param string $message Short description.
+ * @param array  $extra   Optional context (redacted).
+ */
+function arsenal_settings_api_process_log( $message, array $extra = array() ) {
+	if ( ! arsenal_settings_api_logging_enabled() ) {
+		return;
+	}
+	$stack = isset( $GLOBALS['arsenal_settings_api_log_stack'] ) ? $GLOBALS['arsenal_settings_api_log_stack'] : null;
+	if ( ! is_array( $stack ) || array() === $stack ) {
+		return;
+	}
+	$top_id = (int) end( $stack );
+	if ( $top_id < 1 ) {
+		return;
+	}
+	if ( empty( $GLOBALS['arsenal_settings_api_log_entries'][ $top_id ] ) || ! is_array( $GLOBALS['arsenal_settings_api_log_entries'][ $top_id ] ) ) {
+		return;
+	}
+	$ref = &$GLOBALS['arsenal_settings_api_log_entries'][ $top_id ];
+	if ( ! isset( $ref['process'] ) || ! is_array( $ref['process'] ) ) {
+		$ref['process'] = array();
+	}
+	$t0 = isset( $ref['t0'] ) ? (float) $ref['t0'] : microtime( true );
+	$ref['process'][] = array(
+		'offset_ms' => (int) round( 1000 * ( microtime( true ) - $t0 ) ),
+		'message'   => (string) $message,
+		'extra'     => $extra ? arsenal_settings_api_redact_for_log( $extra ) : array(),
+	);
+}
+
+/**
+ * Short string for logging a PHP callable (no invocations).
+ *
+ * @param mixed $cb Callable or null.
+ * @return string
+ */
+function arsenal_settings_api_describe_callable( $cb ) {
+	if ( is_string( $cb ) && $cb !== '' ) {
+		return $cb;
+	}
+	if ( is_array( $cb ) && isset( $cb[0], $cb[1] ) ) {
+		$a = is_object( $cb[0] ) ? get_class( $cb[0] ) : (string) $cb[0];
+		$b = is_string( $cb[1] ) ? $cb[1] : ( is_object( $cb[1] ) ? get_class( $cb[1] ) : '[method]' );
+		return $a . '::' . $b;
+	}
+	return '[callable]';
+}
+
+/**
+ * Encode log payload and trim to max line size.
+ *
+ * @param array $row Row.
+ * @return string
+ */
+function arsenal_settings_api_log_encode_line( array $row ) {
+	$json = wp_json_encode( $row, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+	if ( ! is_string( $json ) ) {
+		return wp_json_encode( array( 'error' => 'json_encode_failed', 'at' => gmdate( 'c' ) ) ) . "\n";
+	}
+	$max = (int) ARSENAL_SETTINGS_API_LOG_MAX_LINE_BYTES;
+	if ( strlen( $json ) > $max ) {
+		$row['truncated'] = true;
+		$row['response']  = '[omitted: line exceeded ARSENAL_SETTINGS_API_LOG_MAX_LINE_BYTES]';
+		if ( isset( $row['process'] ) && is_array( $row['process'] ) && count( $row['process'] ) > 50 ) {
+			$row['process'] = array_slice( $row['process'], 0, 50 );
+			$row['process'][] = array( 'offset_ms' => 0, 'message' => '[process steps truncated]', 'extra' => array() );
+		}
+		$json = wp_json_encode( $row, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+		if ( ! is_string( $json ) || strlen( $json ) > $max ) {
+			$json = wp_json_encode(
+				array(
+					'at'      => gmdate( 'c' ),
+					'route'   => isset( $row['route'] ) ? $row['route'] : '',
+					'message' => 'Log line still too large after truncation.',
+				)
+			);
+		}
+	}
+	return $json . "\n";
+}
+
+/**
+ * Write one NDJSON log line for a completed REST request.
+ *
+ * @param array                $entry    Mutable log entry built in rest_request_before_callbacks.
+ * @param WP_HTTP_Response|WP_REST_Response $response Response.
+ */
+function arsenal_settings_rest_api_write_log_line( array $entry, $response ) {
+	$dir = arsenal_settings_api_log_ensure_dir();
+	if ( is_wp_error( $dir ) ) {
+		return;
+	}
+	$status = 0;
+	$data   = null;
+	if ( is_object( $response ) && method_exists( $response, 'get_status' ) ) {
+		$status = (int) $response->get_status();
+	}
+	if ( is_object( $response ) && method_exists( $response, 'get_data' ) ) {
+		$data = $response->get_data();
+	}
+	$entry['response_status'] = $status;
+	$entry['response']      = arsenal_settings_api_redact_for_log( $data );
+	$entry['duration_ms']   = isset( $entry['t0'] ) ? (int) round( 1000 * ( microtime( true ) - (float) $entry['t0'] ) ) : null;
+	unset( $entry['t0'] );
+
+	$file = $dir . 'api-' . gmdate( 'Y-m-d' ) . '.log';
+	// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock_flock -- binary append
+	$fp = fopen( $file, 'ab' );
+	if ( ! $fp ) {
+		return;
+	}
+	if ( flock( $fp, LOCK_EX ) ) {
+		fwrite( $fp, arsenal_settings_api_log_encode_line( $entry ) );
+		fflush( $fp );
+		flock( $fp, LOCK_UN );
+	}
+	fclose( $fp );
+}
+
+/**
+ * Start logging for Arsenal REST routes (matched handler, before permission/callback).
+ *
+ * @param mixed           $response Prior response (unused).
+ * @param array           $handler  Route handler.
+ * @param WP_REST_Request $request  Request.
+ * @return mixed
+ */
+function arsenal_settings_rest_api_log_begin( $response, $handler, $request ) {
+	if ( ! arsenal_settings_api_logging_enabled() || ! ( $request instanceof WP_REST_Request ) ) {
+		return $response;
+	}
+	$route = $request->get_route();
+	if ( strpos( $route, '/' . ARSENAL_SETTINGS_REST_NAMESPACE ) !== 0 ) {
+		return $response;
+	}
+	if ( ! isset( $GLOBALS['arsenal_settings_api_log_stack'] ) || ! is_array( $GLOBALS['arsenal_settings_api_log_stack'] ) ) {
+		$GLOBALS['arsenal_settings_api_log_stack'] = array();
+	}
+	if ( ! isset( $GLOBALS['arsenal_settings_api_log_entries'] ) || ! is_array( $GLOBALS['arsenal_settings_api_log_entries'] ) ) {
+		$GLOBALS['arsenal_settings_api_log_entries'] = array();
+	}
+	$id = spl_object_id( $request );
+	$GLOBALS['arsenal_settings_api_log_stack'][] = $id;
+	$GLOBALS['arsenal_settings_api_log_entries'][ $id ] = array(
+		'request_id'  => function_exists( 'wp_generate_uuid4' ) ? wp_generate_uuid4() : uniqid( 'req_', true ),
+		'at'          => gmdate( 'c' ),
+		't0'          => microtime( true ),
+		'method'      => $request->get_method(),
+		'route'       => $route,
+		'ip'          => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( (string) $_SERVER['REMOTE_ADDR'] ) ) : '',
+		'params'      => arsenal_settings_api_redact_for_log( $request->get_params() ),
+		'process'     => array(
+			array(
+				'offset_ms' => 0,
+				'message'   => 'rest_request_before_callbacks',
+				'extra'     => array(
+					'callback' => arsenal_settings_api_describe_callable( isset( $handler['callback'] ) ? $handler['callback'] : null ),
+				),
+			),
+		),
+	);
+	return $response;
+}
+
+/**
+ * Finalize and append API log after response is ready.
+ *
+ * @param WP_HTTP_Response $response Response.
+ * @param WP_REST_Server   $server   Server.
+ * @param WP_REST_Request  $request  Request.
+ * @return WP_HTTP_Response
+ */
+function arsenal_settings_rest_api_log_finish( $response, $server, $request ) {
+	if ( ! arsenal_settings_api_logging_enabled() || ! ( $request instanceof WP_REST_Request ) ) {
+		return $response;
+	}
+	$id = spl_object_id( $request );
+	if ( empty( $GLOBALS['arsenal_settings_api_log_entries'][ $id ] ) || ! is_array( $GLOBALS['arsenal_settings_api_log_entries'][ $id ] ) ) {
+		return $response;
+	}
+	$entry = $GLOBALS['arsenal_settings_api_log_entries'][ $id ];
+	unset( $GLOBALS['arsenal_settings_api_log_entries'][ $id ] );
+
+	if ( isset( $GLOBALS['arsenal_settings_api_log_stack'] ) && is_array( $GLOBALS['arsenal_settings_api_log_stack'] ) ) {
+		$stack = &$GLOBALS['arsenal_settings_api_log_stack'];
+		$n     = count( $stack );
+		if ( $n > 0 && (int) $stack[ $n - 1 ] === $id ) {
+			array_pop( $stack );
+		} else {
+			$pos = array_search( $id, $stack, true );
+			if ( false !== $pos ) {
+				unset( $stack[ $pos ] );
+				$stack = array_values( $stack );
+			}
+		}
+	}
+
+	arsenal_settings_rest_api_write_log_line( $entry, $response );
+	return $response;
+}
+
+add_filter( 'rest_request_before_callbacks', 'arsenal_settings_rest_api_log_begin', 1, 3 );
+add_filter( 'rest_post_dispatch', 'arsenal_settings_rest_api_log_finish', 999, 3 );
+
+/**
  * Resolve Stripe customer id from REST params (same rules as create-subscription).
  *
  * @param string $raw_customer              Trimmed "customer" param.
@@ -1658,6 +1991,14 @@ function arsenal_settings_rest_from_wp_error( WP_Error $error ) {
  * @return string|WP_Error cus_… or WP_Error (data.status set for HTTP mapping).
  */
 function arsenal_settings_rest_get_stripe_customer_id( $raw_customer, $email, $create_if_missing_email = false, $create_display_name = '' ) {
+	arsenal_settings_api_process_log(
+		'get_stripe_customer_id',
+		array(
+			'has_raw_customer'    => $raw_customer !== '',
+			'has_email'         => $email !== '',
+			'create_if_missing' => (bool) $create_if_missing_email,
+		)
+	);
 	if ( $raw_customer !== '' && preg_match( '/^cus_[a-zA-Z0-9]+$/', $raw_customer ) ) {
 		return $raw_customer;
 	}
@@ -1805,6 +2146,13 @@ function arsenal_settings_stripe_inline_price_to_deferral_trial_days( array $inl
  * }
  */
 function arsenal_settings_rest_resolve_armember_plan_for_stripe_inline( $plan_id, $payment_cycle = 0 ) {
+	arsenal_settings_api_process_log(
+		'resolve_armember_plan',
+		array(
+			'plan_id'        => (int) $plan_id,
+			'payment_cycle' => (int) $payment_cycle,
+		)
+	);
 	if ( ! class_exists( 'ARM_Plan' ) ) {
 		return new WP_Error(
 			'armember_inactive',
@@ -1928,6 +2276,16 @@ function arsenal_settings_rest_resolve_armember_plan_for_stripe_inline( $plan_id
 	}
 
 	$inline = apply_filters( 'arsenal_settings_armember_plan_stripe_inline', $inline, $plan, $rd, $plan_id, $payment_cycle );
+
+	arsenal_settings_api_process_log(
+		'resolve_armember_plan_ok',
+		array(
+			'plan_name'    => isset( $plan->name ) ? (string) $plan->name : '',
+			'currency'     => isset( $inline['currency'] ) ? (string) $inline['currency'] : '',
+			'unit_amount'  => isset( $inline['unit_amount'] ) ? (int) $inline['unit_amount'] : 0,
+			'trial_days'   => $trial_days,
+		)
+	);
 
 	return array(
 		'inline'              => $inline,
@@ -2061,6 +2419,14 @@ function arsenal_settings_rest_normalize_stripe_customer_id( $customer_field ) {
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_subscription_created_response( $result, array $response_options = array() ) {
+	arsenal_settings_api_process_log(
+		'subscription_created_response',
+		array(
+			'is_wp_error'               => is_wp_error( $result ),
+			'skip_invoice_automation' => ! empty( $response_options['skip_invoice_automation'] ),
+			'subscription_id'         => ( is_array( $result ) && ! empty( $result['id'] ) ) ? (string) $result['id'] : '',
+		)
+	);
 	if ( is_wp_error( $result ) ) {
 		return arsenal_settings_rest_from_wp_error( $result );
 	}
@@ -2264,6 +2630,7 @@ function arsenal_settings_rest_subscription_created_response( $result, array $re
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_check_user_subscription() {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_check_user_subscription' ) );
 	$body = array(
 		'message' => 'Hello world',
 		'status'  => true,
@@ -2290,6 +2657,7 @@ function arsenal_settings_rest_check_user_subscription() {
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_create_subscription( WP_REST_Request $request ) {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_create_subscription' ) );
 	$raw_customer = trim( (string) $request->get_param( 'customer' ) );
 	$email        = trim( (string) $request->get_param( 'customer_email' ) );
 	$price        = trim( (string) $request->get_param( 'price' ) );
@@ -2349,6 +2717,7 @@ function arsenal_settings_rest_create_subscription( WP_REST_Request $request ) {
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_create_subscription_custom( WP_REST_Request $request ) {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_create_subscription_custom' ) );
 	$raw_customer = trim( (string) $request->get_param( 'customer' ) );
 	$email        = trim( (string) $request->get_param( 'customer_email' ) );
 	$quantity     = $request->get_param( 'quantity' );
@@ -2406,6 +2775,7 @@ function arsenal_settings_rest_create_subscription_custom( WP_REST_Request $requ
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_create_recurring_subscription( WP_REST_Request $request ) {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_create_recurring_subscription' ) );
 	$raw_customer = trim( (string) $request->get_param( 'customer' ) );
 	$email        = trim( (string) $request->get_param( 'customer_email' ) );
 	$price        = trim( (string) $request->get_param( 'price' ) );
@@ -2489,6 +2859,7 @@ function arsenal_settings_rest_create_recurring_subscription( WP_REST_Request $r
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_create_recurring_subscription_by_email( WP_REST_Request $request ) {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_create_recurring_subscription_by_email' ) );
 	$email = trim( (string) $request->get_param( 'customer_email' ) );
 	if ( ! is_email( $email ) ) {
 		return new WP_REST_Response(
@@ -2517,6 +2888,7 @@ function arsenal_settings_rest_create_recurring_subscription_by_email( WP_REST_R
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_create_recurring_subscription_by_armember_plan( WP_REST_Request $request ) {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_create_recurring_subscription_by_armember_plan' ) );
 	$email = trim( (string) $request->get_param( 'customer_email' ) );
 	if ( ! is_email( $email ) ) {
 		return new WP_REST_Response(
@@ -2677,6 +3049,7 @@ function arsenal_settings_rest_merge_deferred_armember_plan_request_params( WP_R
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_create_recurring_subscription_by_armember_plan_deferred( WP_REST_Request $request ) {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_create_recurring_subscription_by_armember_plan_deferred' ) );
 	arsenal_settings_rest_merge_deferred_armember_plan_request_params( $request );
 
 	$email = trim( (string) $request->get_param( 'customer_email' ) );
@@ -2800,6 +3173,7 @@ function arsenal_settings_rest_create_recurring_subscription_by_armember_plan_de
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_create_payment( WP_REST_Request $request ) {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_create_payment' ) );
 	$raw_customer = trim( (string) $request->get_param( 'customer' ) );
 	$email        = trim( (string) $request->get_param( 'customer_email' ) );
 	$customer_name = trim( (string) $request->get_param( 'customer_name' ) );
@@ -3127,6 +3501,214 @@ function arsenal_settings_register_stripe_admin_menu() {
 add_action( 'admin_menu', 'arsenal_settings_register_stripe_admin_menu' );
 
 /**
+ * Add Settings → Arsenal API Logs (download / delete NDJSON logs).
+ */
+function arsenal_settings_register_api_logs_admin_menu() {
+	add_options_page(
+		__( 'Arsenal API Logs', 'arsenal-settings' ),
+		__( 'Arsenal API Logs', 'arsenal-settings' ),
+		'manage_options',
+		'arsenal-settings-api-logs',
+		'arsenal_settings_render_api_logs_page'
+	);
+}
+add_action( 'admin_menu', 'arsenal_settings_register_api_logs_admin_menu' );
+
+/**
+ * Nonce action for API log download/delete admin actions.
+ */
+function arsenal_settings_api_log_admin_nonce_action() {
+	return 'arsenal_settings_api_log_action';
+}
+
+/**
+ * Stream a log file download (admin-post).
+ */
+function arsenal_settings_handle_download_api_log() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( esc_html__( 'You do not have permission to download this file.', 'arsenal-settings' ), '', array( 'response' => 403 ) );
+	}
+	check_admin_referer( arsenal_settings_api_log_admin_nonce_action() );
+
+	$file = isset( $_GET['log_file'] ) ? sanitize_file_name( wp_unslash( (string) $_GET['log_file'] ) ) : '';
+	if ( ! preg_match( '/^api-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$/', $file ) ) {
+		wp_die( esc_html__( 'Invalid log file name.', 'arsenal-settings' ), '', array( 'response' => 400 ) );
+	}
+
+	$dir = arsenal_settings_api_log_dir();
+	if ( is_wp_error( $dir ) ) {
+		wp_die( esc_html( $dir->get_error_message() ), '', array( 'response' => 500 ) );
+	}
+
+	$path = trailingslashit( $dir ) . $file;
+	$real = realpath( $path );
+	$base = realpath( $dir );
+	if ( false === $real || false === $base || strpos( $real, $base ) !== 0 || ! is_file( $real ) || ! is_readable( $real ) ) {
+		wp_die( esc_html__( 'Log file not found.', 'arsenal-settings' ), '', array( 'response' => 404 ) );
+	}
+
+	nocache_headers();
+	header( 'Content-Type: application/octet-stream; charset=utf-8' );
+	header( 'Content-Disposition: attachment; filename="' . $file . '"' );
+	header( 'Content-Length: ' . (string) filesize( $real ) );
+	// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_readfile -- intentional download
+	readfile( $real );
+	exit;
+}
+add_action( 'admin_post_arsenal_settings_download_api_log', 'arsenal_settings_handle_download_api_log' );
+
+/**
+ * Delete one log file (admin-post).
+ */
+function arsenal_settings_handle_delete_api_log() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( esc_html__( 'You do not have permission to delete this file.', 'arsenal-settings' ), '', array( 'response' => 403 ) );
+	}
+	check_admin_referer( arsenal_settings_api_log_admin_nonce_action() );
+
+	$file = isset( $_POST['log_file'] ) ? sanitize_file_name( wp_unslash( (string) $_POST['log_file'] ) ) : '';
+	if ( ! preg_match( '/^api-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$/', $file ) ) {
+		wp_die( esc_html__( 'Invalid log file name.', 'arsenal-settings' ), '', array( 'response' => 400 ) );
+	}
+
+	$dir = arsenal_settings_api_log_dir();
+	if ( is_wp_error( $dir ) ) {
+		wp_die( esc_html( $dir->get_error_message() ), '', array( 'response' => 500 ) );
+	}
+
+	$path = trailingslashit( $dir ) . $file;
+	$real = realpath( $path );
+	$base = realpath( $dir );
+	if ( false === $real || false === $base || strpos( $real, $base ) !== 0 || ! is_file( $real ) ) {
+		wp_safe_redirect(
+			add_query_arg(
+				'arsenal_log_msg',
+				__( 'Log file not found.', 'arsenal-settings' ),
+				admin_url( 'options-general.php?page=arsenal-settings-api-logs' )
+			)
+		);
+		exit;
+	}
+
+	if ( ! unlink( $real ) ) {
+		wp_safe_redirect(
+			add_query_arg(
+				'arsenal_log_msg',
+				__( 'Could not delete the log file.', 'arsenal-settings' ),
+				admin_url( 'options-general.php?page=arsenal-settings-api-logs' )
+			)
+		);
+		exit;
+	}
+
+	wp_safe_redirect(
+		add_query_arg(
+			array(
+				'arsenal_log_deleted' => '1',
+				'arsenal_log_msg'     => sprintf(
+					/* translators: %s: log file name */
+					__( 'Deleted log file %s.', 'arsenal-settings' ),
+					$file
+				),
+			),
+			admin_url( 'options-general.php?page=arsenal-settings-api-logs' )
+		)
+	);
+	exit;
+}
+add_action( 'admin_post_arsenal_settings_delete_api_log', 'arsenal_settings_handle_delete_api_log' );
+
+/**
+ * Render Settings → Arsenal API Logs.
+ */
+function arsenal_settings_render_api_logs_page() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		return;
+	}
+
+	$dir_res = arsenal_settings_api_log_ensure_dir();
+	$dir     = is_wp_error( $dir_res ) ? '' : $dir_res;
+	$files   = array();
+	if ( $dir !== '' && is_dir( $dir ) ) {
+		$glob = glob( $dir . 'api-*.log' );
+		if ( is_array( $glob ) ) {
+			$files = $glob;
+			usort(
+				$files,
+				static function ( $a, $b ) {
+					return filemtime( $b ) <=> filemtime( $a );
+				}
+			);
+		}
+	}
+
+	if ( isset( $_GET['arsenal_log_msg'] ) && is_string( $_GET['arsenal_log_msg'] ) ) {
+		$msg = sanitize_text_field( wp_unslash( $_GET['arsenal_log_msg'] ) );
+		if ( $msg !== '' ) {
+			$class = ( isset( $_GET['arsenal_log_deleted'] ) && '1' === (string) wp_unslash( $_GET['arsenal_log_deleted'] ) ) ? 'notice-success' : 'notice-warning';
+			printf(
+				'<div class="notice %1$s is-dismissible"><p>%2$s</p></div>',
+				esc_attr( $class ),
+				esc_html( $msg )
+			);
+		}
+	}
+
+	?>
+	<div class="wrap">
+		<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
+		<p class="description">
+			<?php esc_html_e( 'NDJSON logs for Arsenal REST routes (arsenal-settings/v1). Each line is one request: params, internal process steps, response status and body (sensitive fields redacted). Logs are stored under uploads in a directory not meant for public access.', 'arsenal-settings' ); ?>
+		</p>
+		<?php if ( is_wp_error( $dir_res ) ) : ?>
+			<div class="notice notice-error"><p><?php echo esc_html( $dir_res->get_error_message() ); ?></p></div>
+		<?php elseif ( array() === $files ) : ?>
+			<p><?php esc_html_e( 'No log files yet. They appear after the first API call once logging is enabled.', 'arsenal-settings' ); ?></p>
+		<?php else : ?>
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th scope="col"><?php esc_html_e( 'File', 'arsenal-settings' ); ?></th>
+						<th scope="col"><?php esc_html_e( 'Size', 'arsenal-settings' ); ?></th>
+						<th scope="col"><?php esc_html_e( 'Last modified', 'arsenal-settings' ); ?></th>
+						<th scope="col"><?php esc_html_e( 'Actions', 'arsenal-settings' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ( $files as $path ) : ?>
+						<?php
+						$fname = basename( $path );
+						if ( ! preg_match( '/^api-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$/', $fname ) ) {
+							continue;
+						}
+						$dl = wp_nonce_url(
+							admin_url( 'admin-post.php?action=arsenal_settings_download_api_log&log_file=' . rawurlencode( $fname ) ),
+							arsenal_settings_api_log_admin_nonce_action()
+						);
+						?>
+						<tr>
+							<td><code><?php echo esc_html( $fname ); ?></code></td>
+							<td><?php echo esc_html( size_format( (int) filesize( $path ) ) ); ?></td>
+							<td><?php echo esc_html( gmdate( 'Y-m-d H:i:s', (int) filemtime( $path ) ) ); ?> UTC</td>
+							<td>
+								<a class="button button-small" href="<?php echo esc_url( $dl ); ?>"><?php esc_html_e( 'Download', 'arsenal-settings' ); ?></a>
+								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-block;margin-left:6px;" onsubmit="return confirm(<?php echo wp_json_encode( __( 'Delete this log file permanently?', 'arsenal-settings' ) ); ?>);">
+									<?php wp_nonce_field( arsenal_settings_api_log_admin_nonce_action() ); ?>
+									<input type="hidden" name="action" value="arsenal_settings_delete_api_log" />
+									<input type="hidden" name="log_file" value="<?php echo esc_attr( $fname ); ?>" />
+									<button type="submit" class="button button-small button-link-delete"><?php esc_html_e( 'Delete', 'arsenal-settings' ); ?></button>
+								</form>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		<?php endif; ?>
+	</div>
+	<?php
+}
+
+/**
  * Render Settings → Arsenal Stripe.
  */
 function arsenal_settings_render_stripe_settings_page() {
@@ -3141,6 +3723,7 @@ function arsenal_settings_render_stripe_settings_page() {
 		<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
 		<p class="description">
 			<?php esc_html_e( 'Store your Stripe secret API key here for Arsenal REST endpoints. When a key is saved, it is used before any wp-config.php constant.', 'arsenal-settings' ); ?>
+			<a href="<?php echo esc_url( admin_url( 'options-general.php?page=arsenal-settings-api-logs' ) ); ?>"><?php esc_html_e( 'View Arsenal API request logs', 'arsenal-settings' ); ?></a>
 		</p>
 		<form action="<?php echo esc_url( admin_url( 'options.php' ) ); ?>" method="post">
 			<?php settings_fields( 'arsenal_settings' ); ?>
