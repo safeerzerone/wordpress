@@ -1479,7 +1479,7 @@ function arsenal_settings_register_rest_routes() {
 		ARSENAL_SETTINGS_REST_NAMESPACE,
 		'/create-recurring-subscription-by-armember-plan-deferred',
 		array(
-			'methods'             => WP_REST_Server::CREATABLE,
+			'methods'             => array( WP_REST_Server::READABLE, WP_REST_Server::CREATABLE ),
 			'callback'            => 'arsenal_settings_rest_create_recurring_subscription_by_armember_plan_deferred',
 			'permission_callback' => '__return_true',
 			'args'                => array(
@@ -2596,7 +2596,77 @@ function arsenal_settings_rest_create_recurring_subscription_by_armember_plan( W
 }
 
 /**
+ * Normalize JSON-decoded value into a single associative map for REST params (object, or one-element array of object).
+ *
+ * @param mixed $data Decoded JSON (typically array from json_decode associative).
+ * @return array<string,mixed>
+ */
+function arsenal_settings_rest_normalize_json_param_map( $data ) {
+	if ( ! is_array( $data ) ) {
+		return array();
+	}
+	$keys  = array_keys( $data );
+	$count = count( $keys );
+	if ( 0 === $count ) {
+		return array();
+	}
+	$is_list = ( $keys === range( 0, $count - 1 ) );
+	if ( ! $is_list ) {
+		return $data;
+	}
+	$merged = array();
+	foreach ( $data as $row ) {
+		if ( ! is_array( $row ) ) {
+			continue;
+		}
+		$ikeys  = array_keys( $row );
+		$icount = count( $ikeys );
+		if ( $icount > 0 && $ikeys === range( 0, $icount - 1 ) ) {
+			continue;
+		}
+		$merged = array_merge( $merged, $row );
+	}
+	return $merged;
+}
+
+/**
+ * Merge JSON body parameters into the request (for clients without Content-Type: application/json).
+ *
+ * @param WP_REST_Request $request Request.
+ */
+function arsenal_settings_rest_merge_deferred_armember_plan_request_params( WP_REST_Request $request ) {
+	$json = $request->get_json_params();
+	if ( is_array( $json ) ) {
+		$map = arsenal_settings_rest_normalize_json_param_map( $json );
+		foreach ( $map as $key => $value ) {
+			$request->set_param( (string) $key, $value );
+		}
+	}
+
+	$body = $request->get_body();
+	if ( ! is_string( $body ) ) {
+		return;
+	}
+	$trim = ltrim( $body );
+	if ( '' === $trim || ( '{' !== $trim[0] && '[' !== $trim[0] ) ) {
+		return;
+	}
+	$decoded = json_decode( $body, true );
+	if ( ! is_array( $decoded ) ) {
+		return;
+	}
+	$map = arsenal_settings_rest_normalize_json_param_map( $decoded );
+	foreach ( $map as $key => $value ) {
+		$request->set_param( (string) $key, $value );
+	}
+}
+
+/**
  * REST callback: create-recurring-subscription-by-armember-plan-deferred — same plan resolution as by-armember-plan, but no initial charge on this request.
+ *
+ * Accepts **GET** (query string), **POST** (form-encoded or multipart), or **POST** with a **JSON object** or **JSON array**
+ * wrapping one object (e.g. `[{"customer_email":"..."}]`). Raw JSON bodies are parsed even when `Content-Type` is not
+ * `application/json`. Parameters are merged into the request for `get_param()`.
  *
  * Uses payment_behavior default_incomplete, omits default_payment_method on create (saved PMs are not charged here), and by
  * default sets trial_period_days to one approximate billing period so the first paid charge aligns with the first renewal
@@ -2607,6 +2677,8 @@ function arsenal_settings_rest_create_recurring_subscription_by_armember_plan( W
  * @return WP_REST_Response
  */
 function arsenal_settings_rest_create_recurring_subscription_by_armember_plan_deferred( WP_REST_Request $request ) {
+	arsenal_settings_rest_merge_deferred_armember_plan_request_params( $request );
+
 	$email = trim( (string) $request->get_param( 'customer_email' ) );
 	if ( ! is_email( $email ) ) {
 		return new WP_REST_Response(
