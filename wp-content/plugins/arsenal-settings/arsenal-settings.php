@@ -16,6 +16,71 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'ARSENAL_SETTINGS_VERSION', '1.0.0' );
 define( 'ARSENAL_SETTINGS_REST_NAMESPACE', 'arsenal-settings/v1' );
 
+/** User meta key: plaintext API key shown once after generation (must match saved option). */
+function arsenal_settings_pending_api_key_usermeta_key() {
+	return 'arsenal_settings_pending_api_key_reveal';
+}
+
+/**
+ * Admin URL for an Arsenal plugin screen (top-level Arsenal menu).
+ *
+ * @param string $page Menu slug (e.g. arsenal-settings, arsenal-settings-stripe).
+ * @return string
+ */
+function arsenal_settings_admin_page_url( $page ) {
+	return add_query_arg( 'page', $page, admin_url( 'admin.php' ) );
+}
+
+/**
+ * Stored secret used to authorize REST requests to arsenal-settings/v1 (optional until generated).
+ *
+ * @return string Non-empty hex secret or empty when not configured.
+ */
+function arsenal_settings_get_rest_api_security_key() {
+	$v = get_option( 'arsenal_settings_rest_api_security_key', '' );
+	return is_string( $v ) ? trim( $v ) : '';
+}
+
+/**
+ * Read API key from request: X-Arsenal-Settings-Api-Key header or Authorization: Bearer … .
+ *
+ * @param WP_REST_Request $request Request.
+ * @return string
+ */
+function arsenal_settings_rest_request_get_api_key( WP_REST_Request $request ) {
+	$header = $request->get_header( 'x_arsenal_settings_api_key' );
+	if ( is_string( $header ) && $header !== '' ) {
+		return trim( $header );
+	}
+	$auth = $request->get_header( 'authorization' );
+	if ( is_string( $auth ) && $auth !== '' && preg_match( '/Bearer\s+(\S+)/i', $auth, $m ) ) {
+		return trim( $m[1] );
+	}
+	return '';
+}
+
+/**
+ * REST permission: when no key is stored, allow (legacy). When a key exists, require a matching header.
+ *
+ * @param WP_REST_Request $request Request.
+ * @return bool|WP_Error
+ */
+function arsenal_settings_rest_permission_callback( WP_REST_Request $request ) {
+	$stored = arsenal_settings_get_rest_api_security_key();
+	if ( $stored === '' ) {
+		return true;
+	}
+	$provided = arsenal_settings_rest_request_get_api_key( $request );
+	if ( $provided !== '' && hash_equals( $stored, $provided ) ) {
+		return true;
+	}
+	return new WP_Error(
+		'rest_forbidden',
+		__( 'Invalid or missing API security key. Send header X-Arsenal-Settings-Api-Key or Authorization: Bearer with the key from Dashboard → Arsenal → REST API key.', 'arsenal-settings' ),
+		array( 'status' => 401 )
+	);
+}
+
 /** Relative to uploads base directory; holds NDJSON API logs. */
 define( 'ARSENAL_SETTINGS_API_LOG_SUBDIR', 'arsenal-settings-api-logs' );
 
@@ -25,7 +90,7 @@ define( 'ARSENAL_SETTINGS_API_LOG_MAX_LINE_BYTES', 524288 );
 /**
  * Stripe secret key (test or live sk_…).
  *
- * Priority: (1) value saved under Settings → Arsenal Stripe, (2) wp-config.php constant ARSENAL_STRIPE_SECRET_KEY if set,
+ * Priority: (1) value saved under Dashboard → Arsenal → Stripe, (2) wp-config.php constant ARSENAL_STRIPE_SECRET_KEY if set,
  * (3) filter arsenal_stripe_secret_key (receives the value from previous steps).
  *
  * @return string
@@ -99,7 +164,7 @@ function arsenal_settings_stripe_api_get( $path ) {
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Dashboard → Arsenal → Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -162,7 +227,7 @@ function arsenal_settings_stripe_api_post( $path, array $body ) {
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Dashboard → Arsenal → Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -325,7 +390,7 @@ function arsenal_settings_stripe_find_customer_id_by_email( $email ) {
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Dashboard → Arsenal → Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -860,7 +925,7 @@ function arsenal_settings_stripe_create_subscription( $customer_id, $price_id, $
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Dashboard → Arsenal → Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -930,7 +995,7 @@ function arsenal_settings_stripe_create_product( $name ) {
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Dashboard → Arsenal → Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -1005,7 +1070,7 @@ function arsenal_settings_stripe_create_subscription_inline_price( $customer_id,
 	if ( '' === $secret ) {
 		return new WP_Error(
 			'stripe_config',
-			__( 'Stripe secret key is not configured. Save it under Settings → Arsenal Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			__( 'Stripe secret key is not configured. Save it under Dashboard → Arsenal → Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
 			array( 'status' => 500 )
 		);
 	}
@@ -1159,7 +1224,7 @@ function arsenal_settings_register_rest_routes() {
 		array(
 			'methods'             => WP_REST_Server::READABLE,
 			'callback'            => 'arsenal_settings_rest_check_user_subscription',
-			'permission_callback' => '__return_true',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
 		)
 	);
 
@@ -1169,7 +1234,7 @@ function arsenal_settings_register_rest_routes() {
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => 'arsenal_settings_rest_create_subscription',
-			'permission_callback' => '__return_true',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
 			'args'                => array(
 				'customer'        => array(
 					'required'          => false,
@@ -1219,7 +1284,7 @@ function arsenal_settings_register_rest_routes() {
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => 'arsenal_settings_rest_create_subscription_custom',
-			'permission_callback' => '__return_true',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
 			'args'                => array(
 				'customer'               => array(
 					'required'          => false,
@@ -1293,7 +1358,7 @@ function arsenal_settings_register_rest_routes() {
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => 'arsenal_settings_rest_create_recurring_subscription',
-			'permission_callback' => '__return_true',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
 			'args'                => array(
 				'customer'               => array(
 					'required'          => false,
@@ -1372,7 +1437,7 @@ function arsenal_settings_register_rest_routes() {
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => 'arsenal_settings_rest_create_recurring_subscription_by_email',
-			'permission_callback' => '__return_true',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
 			'args'                => array(
 				'customer_email'         => array(
 					'required'          => true,
@@ -1446,7 +1511,7 @@ function arsenal_settings_register_rest_routes() {
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => 'arsenal_settings_rest_create_recurring_subscription_by_armember_plan',
-			'permission_callback' => '__return_true',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
 			'args'                => array(
 				'customer_email'         => array(
 					'required'          => true,
@@ -1495,7 +1560,7 @@ function arsenal_settings_register_rest_routes() {
 		array(
 			'methods'             => array( WP_REST_Server::READABLE, WP_REST_Server::CREATABLE ),
 			'callback'            => 'arsenal_settings_rest_create_recurring_subscription_by_armember_plan_deferred',
-			'permission_callback' => '__return_true',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
 			'args'                => array(
 				'customer_email'           => array(
 					'required'          => true,
@@ -1549,7 +1614,7 @@ function arsenal_settings_register_rest_routes() {
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => 'arsenal_settings_rest_create_payment',
-			'permission_callback' => '__return_true',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
 			'args'                => array(
 				'customer'               => array(
 					'required'          => false,
@@ -3441,7 +3506,7 @@ function arsenal_settings_stripe_secret_key_option_name() {
 }
 
 /**
- * Sanitize and persist Stripe secret key from Settings → Arsenal Stripe.
+ * Sanitize and persist Stripe secret key from Dashboard → Arsenal → Stripe.
  *
  * @param mixed $value Submitted value.
  * @return string Stored key or empty string.
@@ -3487,32 +3552,273 @@ function arsenal_settings_register_stripe_admin_settings() {
 add_action( 'admin_init', 'arsenal_settings_register_stripe_admin_settings' );
 
 /**
- * Add Settings → Arsenal Stripe.
+ * Top-level Dashboard → Arsenal menu (REST API key, Stripe, API logs).
  */
-function arsenal_settings_register_stripe_admin_menu() {
-	add_options_page(
+function arsenal_settings_register_admin_menus() {
+	add_menu_page(
+		__( 'Arsenal — REST API key', 'arsenal-settings' ),
+		__( 'Arsenal', 'arsenal-settings' ),
+		'manage_options',
+		'arsenal-settings',
+		'arsenal_settings_render_plugin_settings_page',
+		'dashicons-admin-network',
+		58
+	);
+	add_submenu_page(
+		'arsenal-settings',
+		__( 'REST API key', 'arsenal-settings' ),
+		__( 'REST API key', 'arsenal-settings' ),
+		'manage_options',
+		'arsenal-settings',
+		'arsenal_settings_render_plugin_settings_page'
+	);
+	add_submenu_page(
+		'arsenal-settings',
 		__( 'Arsenal Stripe', 'arsenal-settings' ),
-		__( 'Arsenal Stripe', 'arsenal-settings' ),
+		__( 'Stripe', 'arsenal-settings' ),
 		'manage_options',
 		'arsenal-settings-stripe',
 		'arsenal_settings_render_stripe_settings_page'
 	);
-}
-add_action( 'admin_menu', 'arsenal_settings_register_stripe_admin_menu' );
-
-/**
- * Add Settings → Arsenal API Logs (download / delete NDJSON logs).
- */
-function arsenal_settings_register_api_logs_admin_menu() {
-	add_options_page(
+	add_submenu_page(
+		'arsenal-settings',
 		__( 'Arsenal API Logs', 'arsenal-settings' ),
-		__( 'Arsenal API Logs', 'arsenal-settings' ),
+		__( 'API logs', 'arsenal-settings' ),
 		'manage_options',
 		'arsenal-settings-api-logs',
 		'arsenal_settings_render_api_logs_page'
 	);
 }
-add_action( 'admin_menu', 'arsenal_settings_register_api_logs_admin_menu' );
+add_action( 'admin_menu', 'arsenal_settings_register_admin_menus' );
+
+/**
+ * Redirect old Settings submenu URLs (bookmarks) to Dashboard → Arsenal screens.
+ */
+function arsenal_settings_redirect_legacy_settings_urls() {
+	global $pagenow;
+	if ( 'options-general.php' !== $pagenow || empty( $_GET['page'] ) || ! current_user_can( 'manage_options' ) ) {
+		return;
+	}
+	$page = sanitize_text_field( wp_unslash( (string) $_GET['page'] ) );
+	if ( ! in_array( $page, array( 'arsenal-settings', 'arsenal-settings-stripe', 'arsenal-settings-api-logs' ), true ) ) {
+		return;
+	}
+	wp_safe_redirect( arsenal_settings_admin_page_url( $page ) );
+	exit;
+}
+add_action( 'admin_init', 'arsenal_settings_redirect_legacy_settings_urls', 0 );
+
+/**
+ * Nonce action for regenerating or removing the REST API security key.
+ */
+function arsenal_settings_api_key_admin_nonce_action() {
+	return 'arsenal_settings_api_key_action';
+}
+
+/**
+ * Persist a new random REST API key and show it once to the current admin.
+ */
+function arsenal_settings_handle_regenerate_api_key() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( esc_html__( 'You do not have permission to change this setting.', 'arsenal-settings' ), '', array( 'response' => 403 ) );
+	}
+	check_admin_referer( arsenal_settings_api_key_admin_nonce_action() );
+	$key = bin2hex( random_bytes( 32 ) );
+	update_option( 'arsenal_settings_rest_api_security_key', $key, false );
+	update_user_meta( get_current_user_id(), arsenal_settings_pending_api_key_usermeta_key(), $key );
+	wp_safe_redirect(
+		add_query_arg(
+			'arsenal_key_generated',
+			'1',
+			arsenal_settings_admin_page_url( 'arsenal-settings' )
+		)
+	);
+	exit;
+}
+add_action( 'admin_post_arsenal_settings_regenerate_api_key', 'arsenal_settings_handle_regenerate_api_key' );
+
+/**
+ * Remove stored REST API key so routes accept requests without a key again.
+ */
+function arsenal_settings_handle_remove_api_key() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( esc_html__( 'You do not have permission to change this setting.', 'arsenal-settings' ), '', array( 'response' => 403 ) );
+	}
+	check_admin_referer( arsenal_settings_api_key_admin_nonce_action() );
+	delete_option( 'arsenal_settings_rest_api_security_key' );
+	delete_user_meta( get_current_user_id(), arsenal_settings_pending_api_key_usermeta_key() );
+	wp_safe_redirect(
+		add_query_arg(
+			'arsenal_key_removed',
+			'1',
+			arsenal_settings_admin_page_url( 'arsenal-settings' )
+		)
+	);
+	exit;
+}
+add_action( 'admin_post_arsenal_settings_remove_api_key', 'arsenal_settings_handle_remove_api_key' );
+
+/**
+ * Render Dashboard → Arsenal → REST API key.
+ */
+function arsenal_settings_render_plugin_settings_page() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		return;
+	}
+
+	$user_id = get_current_user_id();
+	$key     = arsenal_settings_get_rest_api_security_key();
+	$pending = get_user_meta( $user_id, arsenal_settings_pending_api_key_usermeta_key(), true );
+	$pending = is_string( $pending ) ? $pending : '';
+
+	$show_full = ( $pending !== '' && $key !== '' && hash_equals( $key, $pending ) );
+	if ( $show_full ) {
+		delete_user_meta( $user_id, arsenal_settings_pending_api_key_usermeta_key() );
+	}
+
+	if ( isset( $_GET['arsenal_key_generated'] ) && '1' === (string) wp_unslash( $_GET['arsenal_key_generated'] ) ) {
+		if ( $show_full ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'A new API security key was generated. Copy it from the field below and store it somewhere safe.', 'arsenal-settings' ) . '</p></div>';
+		} else {
+			echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'The key was saved, but it could not be matched to this browser session for display. Reload the page: if a key is set, you can copy it from the field below.', 'arsenal-settings' ) . '</p></div>';
+		}
+	}
+	if ( isset( $_GET['arsenal_key_removed'] ) && '1' === (string) wp_unslash( $_GET['arsenal_key_removed'] ) ) {
+		echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'The API security key was removed. REST endpoints are open to anyone who can reach your site until you generate a new key.', 'arsenal-settings' ) . '</p></div>';
+	}
+
+	$regen_url  = admin_url( 'admin-post.php' );
+	$remove_url = admin_url( 'admin-post.php' );
+	$example    = rest_url( ARSENAL_SETTINGS_REST_NAMESPACE . '/check-user-subscription' );
+
+	?>
+	<div class="wrap">
+		<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
+		<p>
+			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-stripe' ) ); ?>"><?php esc_html_e( 'Stripe', 'arsenal-settings' ); ?></a>
+			&middot;
+			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-api-logs' ) ); ?>"><?php esc_html_e( 'API logs', 'arsenal-settings' ); ?></a>
+		</p>
+		<p class="description">
+			<?php esc_html_e( 'When a security key is set, all Arsenal REST routes require it on every request. Until you generate a key, behavior stays the same as before (no key required).', 'arsenal-settings' ); ?>
+		</p>
+
+		<h2 class="title"><?php esc_html_e( 'REST API security key', 'arsenal-settings' ); ?></h2>
+		<p><?php esc_html_e( 'Send the key using either of these on each request:', 'arsenal-settings' ); ?></p>
+		<ul style="list-style:disc;margin-left:1.5em;">
+			<li><code>X-Arsenal-Settings-Api-Key: &lt;your-key&gt;</code></li>
+			<li><code>Authorization: Bearer &lt;your-key&gt;</code></li>
+		</ul>
+		<p class="description">
+			<?php
+			printf(
+				/* translators: %s: example REST URL */
+				esc_html__( 'Example base URL (route may vary): %s', 'arsenal-settings' ),
+				'<code>' . esc_html( $example ) . '</code>'
+			);
+			?>
+		</p>
+
+		<?php
+		$display_key = '';
+		if ( $show_full ) {
+			$display_key = $pending;
+		} elseif ( $key !== '' ) {
+			$display_key = $key;
+		}
+		?>
+		<?php if ( $display_key !== '' ) : ?>
+			<?php if ( $show_full ) : ?>
+				<div class="notice notice-success"><p><strong><?php esc_html_e( 'Your new key—copy it below and store it somewhere safe.', 'arsenal-settings' ); ?></strong></p></div>
+			<?php else : ?>
+				<p class="description">
+					<?php esc_html_e( 'Current API key (full value below). Only administrators can open this screen—rotate the key if it may have been exposed.', 'arsenal-settings' ); ?>
+				</p>
+			<?php endif; ?>
+			<p>
+				<label for="arsenal-api-key-field" class="screen-reader-text"><?php esc_html_e( 'API security key', 'arsenal-settings' ); ?></label>
+				<textarea id="arsenal-api-key-field" class="large-text code" rows="3" readonly spellcheck="false" style="font-family:monospace;"><?php echo esc_textarea( $display_key ); ?></textarea>
+			</p>
+			<p>
+				<button type="button" class="button button-primary" id="arsenal-copy-api-key"><?php esc_html_e( 'Copy key to clipboard', 'arsenal-settings' ); ?></button>
+				<button type="button" class="button" id="arsenal-select-api-key"><?php esc_html_e( 'Select all', 'arsenal-settings' ); ?></button>
+			</p>
+			<script>
+			(function () {
+				var ta = document.getElementById('arsenal-api-key-field');
+				var copyBtn = document.getElementById('arsenal-copy-api-key');
+				var selBtn = document.getElementById('arsenal-select-api-key');
+				if (!ta) { return; }
+				function selectKey() {
+					ta.focus();
+					ta.select();
+					if (typeof ta.setSelectionRange === 'function') {
+						ta.setSelectionRange(0, ta.value.length);
+					}
+				}
+				function copyText(text) {
+					if (navigator.clipboard && window.isSecureContext && typeof navigator.clipboard.writeText === 'function') {
+						return navigator.clipboard.writeText(text);
+					}
+					return Promise.reject();
+				}
+				if (selBtn) { selBtn.addEventListener('click', function (e) { e.preventDefault(); selectKey(); }); }
+				if (copyBtn) {
+					copyBtn.addEventListener('click', function (e) {
+						e.preventDefault();
+						var v = ta.value;
+						var done = <?php echo wp_json_encode( __( 'Copied!', 'arsenal-settings' ) ); ?>;
+						var orig = <?php echo wp_json_encode( __( 'Copy key to clipboard', 'arsenal-settings' ) ); ?>;
+						var fail = <?php echo wp_json_encode( __( 'Press Ctrl+C (Cmd+C) after Select all', 'arsenal-settings' ) ); ?>;
+						function ok() { copyBtn.textContent = done; setTimeout(function () { copyBtn.textContent = orig; }, 2500); }
+						function tryExec() {
+							selectKey();
+							try {
+								if (document.queryCommandSupported && document.queryCommandSupported('copy') && document.execCommand('copy')) {
+									ok();
+									return true;
+								}
+							} catch (err) {}
+							return false;
+						}
+						copyText(v).then(ok).catch(function () {
+							if (!tryExec()) {
+								selectKey();
+								copyBtn.textContent = fail;
+								setTimeout(function () { copyBtn.textContent = orig; }, 4000);
+							}
+						});
+					});
+				}
+				ta.addEventListener('click', function () { selectKey(); });
+			})();
+			</script>
+		<?php else : ?>
+			<p><?php esc_html_e( 'No key is configured yet. Generate one to require clients to authenticate.', 'arsenal-settings' ); ?></p>
+		<?php endif; ?>
+
+		<form method="post" action="<?php echo esc_url( $regen_url ); ?>" style="margin-top:1em;display:inline-block;margin-right:8px;" onsubmit="return confirm(<?php echo wp_json_encode( __( 'This invalidates the previous key immediately. Clients must use the new key. Continue?', 'arsenal-settings' ) ); ?>);">
+			<?php wp_nonce_field( arsenal_settings_api_key_admin_nonce_action() ); ?>
+			<input type="hidden" name="action" value="arsenal_settings_regenerate_api_key" />
+			<?php
+			submit_button(
+				$key !== '' ? __( 'Generate new security key', 'arsenal-settings' ) : __( 'Generate security key', 'arsenal-settings' ),
+				'primary',
+				'submit',
+				false
+			);
+			?>
+		</form>
+		<?php if ( $key !== '' ) : ?>
+			<form method="post" action="<?php echo esc_url( $remove_url ); ?>" style="display:inline-block;" onsubmit="return confirm(<?php echo wp_json_encode( __( 'Remove the key and allow unauthenticated access to Arsenal REST routes again?', 'arsenal-settings' ) ); ?>);">
+				<?php wp_nonce_field( arsenal_settings_api_key_admin_nonce_action() ); ?>
+				<input type="hidden" name="action" value="arsenal_settings_remove_api_key" />
+				<?php submit_button( __( 'Remove API key', 'arsenal-settings' ), 'delete', 'submit', false ); ?>
+			</form>
+		<?php endif; ?>
+	</div>
+	<?php
+}
 
 /**
  * Nonce action for API log download/delete admin actions.
@@ -3584,7 +3890,7 @@ function arsenal_settings_handle_delete_api_log() {
 			add_query_arg(
 				'arsenal_log_msg',
 				__( 'Log file not found.', 'arsenal-settings' ),
-				admin_url( 'options-general.php?page=arsenal-settings-api-logs' )
+				arsenal_settings_admin_page_url( 'arsenal-settings-api-logs' )
 			)
 		);
 		exit;
@@ -3595,7 +3901,7 @@ function arsenal_settings_handle_delete_api_log() {
 			add_query_arg(
 				'arsenal_log_msg',
 				__( 'Could not delete the log file.', 'arsenal-settings' ),
-				admin_url( 'options-general.php?page=arsenal-settings-api-logs' )
+				arsenal_settings_admin_page_url( 'arsenal-settings-api-logs' )
 			)
 		);
 		exit;
@@ -3611,7 +3917,7 @@ function arsenal_settings_handle_delete_api_log() {
 					$file
 				),
 			),
-			admin_url( 'options-general.php?page=arsenal-settings-api-logs' )
+			arsenal_settings_admin_page_url( 'arsenal-settings-api-logs' )
 		)
 	);
 	exit;
@@ -3619,7 +3925,7 @@ function arsenal_settings_handle_delete_api_log() {
 add_action( 'admin_post_arsenal_settings_delete_api_log', 'arsenal_settings_handle_delete_api_log' );
 
 /**
- * Render Settings → Arsenal API Logs.
+ * Render Dashboard → Arsenal → API logs.
  */
 function arsenal_settings_render_api_logs_page() {
 	if ( ! current_user_can( 'manage_options' ) ) {
@@ -3657,6 +3963,11 @@ function arsenal_settings_render_api_logs_page() {
 	?>
 	<div class="wrap">
 		<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
+		<p>
+			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings' ) ); ?>"><?php esc_html_e( 'REST API key', 'arsenal-settings' ); ?></a>
+			&middot;
+			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-stripe' ) ); ?>"><?php esc_html_e( 'Stripe', 'arsenal-settings' ); ?></a>
+		</p>
 		<p class="description">
 			<?php esc_html_e( 'NDJSON logs for Arsenal REST routes (arsenal-settings/v1). Each line is one request: params, internal process steps, response status and body (sensitive fields redacted). Logs are stored under uploads in a directory not meant for public access.', 'arsenal-settings' ); ?>
 		</p>
@@ -3709,7 +4020,7 @@ function arsenal_settings_render_api_logs_page() {
 }
 
 /**
- * Render Settings → Arsenal Stripe.
+ * Render Dashboard → Arsenal → Stripe.
  */
 function arsenal_settings_render_stripe_settings_page() {
 	if ( ! current_user_can( 'manage_options' ) ) {
@@ -3723,7 +4034,9 @@ function arsenal_settings_render_stripe_settings_page() {
 		<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
 		<p class="description">
 			<?php esc_html_e( 'Store your Stripe secret API key here for Arsenal REST endpoints. When a key is saved, it is used before any wp-config.php constant.', 'arsenal-settings' ); ?>
-			<a href="<?php echo esc_url( admin_url( 'options-general.php?page=arsenal-settings-api-logs' ) ); ?>"><?php esc_html_e( 'View Arsenal API request logs', 'arsenal-settings' ); ?></a>
+			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings' ) ); ?>"><?php esc_html_e( 'REST API security key', 'arsenal-settings' ); ?></a>
+			&middot;
+			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-api-logs' ) ); ?>"><?php esc_html_e( 'View Arsenal API request logs', 'arsenal-settings' ); ?></a>
 		</p>
 		<form action="<?php echo esc_url( admin_url( 'options.php' ) ); ?>" method="post">
 			<?php settings_fields( 'arsenal_settings' ); ?>
