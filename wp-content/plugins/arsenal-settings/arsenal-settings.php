@@ -315,6 +315,224 @@ function arsenal_settings_stripe_get_subscription( $subscription_id, array $expa
 }
 
 /**
+ * Stripe DELETE v1/{path} (no body).
+ *
+ * @param string $path Path after v1/ (no leading slash).
+ * @return array|WP_Error Decoded JSON object or error.
+ */
+function arsenal_settings_stripe_api_delete( $path ) {
+	arsenal_settings_api_process_log( 'stripe_api_delete', array( 'path' => (string) $path ) );
+	$secret = arsenal_settings_get_stripe_secret_key();
+	if ( '' === $secret ) {
+		return new WP_Error(
+			'stripe_config',
+			__( 'Stripe secret key is not configured. Save it under Dashboard → Arsenal → Stripe in the admin, or define ARSENAL_STRIPE_SECRET_KEY in wp-config.php, or use the arsenal_stripe_secret_key filter.', 'arsenal-settings' ),
+			array( 'status' => 500 )
+		);
+	}
+
+	$url      = 'https://api.stripe.com/v1/' . ltrim( (string) $path, '/' );
+	$response = wp_remote_request(
+		$url,
+		array(
+			'timeout' => 30,
+			'method'  => 'DELETE',
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $secret,
+			),
+		)
+	);
+
+	if ( is_wp_error( $response ) ) {
+		return $response;
+	}
+
+	$code = wp_remote_retrieve_response_code( $response );
+	$raw  = wp_remote_retrieve_body( $response );
+	$data = json_decode( $raw, true );
+
+	if ( ! is_array( $data ) ) {
+		return new WP_Error(
+			'stripe_invalid_response',
+			__( 'Invalid response from Stripe.', 'arsenal-settings' ),
+			array( 'status' => 502 )
+		);
+	}
+
+	if ( $code >= 400 ) {
+		$message = isset( $data['error']['message'] ) ? $data['error']['message'] : __( 'Stripe request failed.', 'arsenal-settings' );
+		return new WP_Error(
+			isset( $data['error']['type'] ) ? 'stripe_' . sanitize_key( $data['error']['type'] ) : 'stripe_error',
+			$message,
+			array(
+				'status'       => $code,
+				'stripe_error' => isset( $data['error'] ) ? $data['error'] : null,
+			)
+		);
+	}
+
+	return $data;
+}
+
+/**
+ * Whether a Stripe Subscription status is fully ended (omit from “current customer subscriptions” lists).
+ *
+ * @param string $status Stripe subscription.status.
+ * @return bool
+ */
+function arsenal_settings_stripe_subscription_status_is_ended( $status ) {
+	return in_array( (string) $status, array( 'canceled', 'incomplete_expired' ), true );
+}
+
+/**
+ * List Stripe Subscriptions for a Customer (paginated).
+ *
+ * @param string $customer_id   cus_….
+ * @param bool   $exclude_ended When true, omits subscriptions with status canceled or incomplete_expired (Stripe still stores them; they are filtered here for roster-style lists).
+ * @return array<int,array>|WP_Error
+ */
+function arsenal_settings_stripe_list_subscriptions_for_customer( $customer_id, $exclude_ended = false ) {
+	if ( ! preg_match( '/^cus_[a-zA-Z0-9]+$/', (string) $customer_id ) ) {
+		return new WP_Error(
+			'invalid_customer_id',
+			__( 'Invalid Stripe customer id.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$all            = array();
+	$starting_after = null;
+
+	do {
+		$query = array(
+			'customer' => (string) $customer_id,
+			'status'   => 'all',
+			'limit'    => 100,
+		);
+		if ( is_string( $starting_after ) && $starting_after !== '' ) {
+			$query['starting_after'] = $starting_after;
+		}
+		$path = arsenal_settings_stripe_path_with_query( 'subscriptions', $query );
+		$page = arsenal_settings_stripe_api_get( $path );
+		if ( is_wp_error( $page ) ) {
+			return $page;
+		}
+		if ( empty( $page['data'] ) || ! is_array( $page['data'] ) ) {
+			break;
+		}
+		foreach ( $page['data'] as $row ) {
+			if ( is_array( $row ) && ! empty( $row['id'] ) && is_string( $row['id'] ) ) {
+				if ( $exclude_ended && ! empty( $row['status'] ) && arsenal_settings_stripe_subscription_status_is_ended( $row['status'] ) ) {
+					continue;
+				}
+				$all[] = $row;
+			}
+		}
+		if ( ! empty( $page['has_more'] ) && ! empty( $page['data'] ) ) {
+			$last             = end( $page['data'] );
+			$starting_after   = ( is_array( $last ) && ! empty( $last['id'] ) ) ? (string) $last['id'] : null;
+			reset( $page['data'] );
+		} else {
+			$starting_after = null;
+		}
+	} while ( $starting_after );
+
+	return $all;
+}
+
+/**
+ * Read Subscription Schedule id from a Stripe Subscription API object (list or GET row).
+ *
+ * @param array $subscription_row Decoded subscription object.
+ * @return string sub_sched_… or empty string.
+ */
+function arsenal_settings_stripe_subscription_row_schedule_id( array $subscription_row ) {
+	$sch = isset( $subscription_row['schedule'] ) ? $subscription_row['schedule'] : null;
+	if ( is_string( $sch ) && preg_match( '/^sub_sched_[a-zA-Z0-9]+$/', $sch ) ) {
+		return $sch;
+	}
+	if ( is_array( $sch ) && ! empty( $sch['id'] ) && is_string( $sch['id'] ) && preg_match( '/^sub_sched_[a-zA-Z0-9]+$/', $sch['id'] ) ) {
+		return (string) $sch['id'];
+	}
+	return '';
+}
+
+/**
+ * Cancel a Stripe Subscription Schedule (ends the schedule and its managed subscription per Stripe).
+ *
+ * @see https://docs.stripe.com/api/subscription_schedules/cancel
+ *
+ * @param string $schedule_id sub_sched_….
+ * @param array  $body        Optional: invoice_now, prorate (boolean strings for form encoding).
+ * @return array|WP_Error Canceled subscription_schedule object or error.
+ */
+function arsenal_settings_stripe_subscription_schedule_cancel( $schedule_id, array $body = array() ) {
+	if ( ! preg_match( '/^sub_sched_[a-zA-Z0-9]+$/', (string) $schedule_id ) ) {
+		return new WP_Error(
+			'invalid_subscription_schedule_id',
+			__( 'Invalid Stripe Subscription Schedule id (expected sub_sched_…).', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+	$path = 'subscription_schedules/' . rawurlencode( (string) $schedule_id ) . '/cancel';
+	return arsenal_settings_stripe_api_post( $path, $body );
+}
+
+/**
+ * Cancel a Stripe Subscription.
+ *
+ * When the subscription has a Subscription Schedule (`schedule`: sub_sched_…), uses
+ * `POST /v1/subscription_schedules/{id}/cancel` as documented by Stripe (instead of updating the Subscription).
+ * Otherwise: immediate uses `DELETE /v1/subscriptions/{id}`; non-immediate uses `cancel_at_period_end` on the Subscription.
+ *
+ * @param string     $subscription_id         sub_….
+ * @param bool       $immediate               When no schedule: true = delete subscription now; false = cancel at period end.
+ * @param array|null $schedule_result_cache   Optional. Pass `array()` by reference to dedupe schedule cancels when several subs share one schedule.
+ * @return array|WP_Error Subscription or subscription_schedule object from Stripe, or error.
+ */
+function arsenal_settings_stripe_subscription_cancel( $subscription_id, $immediate = false, &$schedule_result_cache = null ) {
+	if ( ! preg_match( '/^sub_[a-zA-Z0-9]+$/', (string) $subscription_id ) ) {
+		return new WP_Error(
+			'invalid_subscription_id',
+			__( 'Invalid Stripe subscription id.', 'arsenal-settings' ),
+			array( 'status' => 400 )
+		);
+	}
+
+	$sub_id = (string) $subscription_id;
+
+	$current = arsenal_settings_stripe_get_subscription( $sub_id );
+	if ( is_wp_error( $current ) ) {
+		return $current;
+	}
+
+	$schedule_id = arsenal_settings_stripe_subscription_row_schedule_id( $current );
+	if ( $schedule_id !== '' ) {
+		if ( is_array( $schedule_result_cache ) && isset( $schedule_result_cache[ $schedule_id ] ) ) {
+			return $schedule_result_cache[ $schedule_id ];
+		}
+		$result = arsenal_settings_stripe_subscription_schedule_cancel( $schedule_id, array() );
+		if ( is_array( $schedule_result_cache ) && ! is_wp_error( $result ) ) {
+			$schedule_result_cache[ $schedule_id ] = $result;
+		}
+		return $result;
+	}
+
+	if ( $immediate ) {
+		return arsenal_settings_stripe_api_delete( 'subscriptions/' . rawurlencode( $sub_id ) );
+	}
+
+	if ( ! empty( $current['cancel_at_period_end'] ) ) {
+		return $current;
+	}
+
+	return arsenal_settings_stripe_api_post(
+		'subscriptions/' . rawurlencode( $sub_id ),
+		array( 'cancel_at_period_end' => 'true' )
+	);
+}
+
+/**
  * Resolve PaymentIntent client_secret from a subscription API object (handles unexpanded invoice / PI).
  *
  * @param array $subscription Decoded subscription object from Stripe.
@@ -1610,6 +1828,28 @@ function arsenal_settings_register_rest_routes() {
 
 	register_rest_route(
 		ARSENAL_SETTINGS_REST_NAMESPACE,
+		'/cancel-subscription-by-email',
+		array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => 'arsenal_settings_rest_cancel_subscription_by_email',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
+			'args'                => array(
+				'customer_email' => array(
+					'required'          => true,
+					'type'              => 'string',
+					'sanitize_callback' => 'sanitize_email',
+				),
+				'immediate'        => array(
+					'required' => false,
+					'type'     => 'boolean',
+					'default'  => false,
+				),
+			),
+		)
+	);
+
+	register_rest_route(
+		ARSENAL_SETTINGS_REST_NAMESPACE,
 		'/create-payment',
 		array(
 			'methods'             => WP_REST_Server::CREATABLE,
@@ -2477,6 +2717,43 @@ function arsenal_settings_rest_normalize_stripe_customer_id( $customer_field ) {
 }
 
 /**
+ * Compact subscription fields for REST “customer subscriptions” lists.
+ *
+ * @param array $row Subscription object from Stripe.
+ * @return array<string,mixed>
+ */
+function arsenal_settings_rest_subscription_row_public_summary( array $row ) {
+	$price_id = null;
+	if ( ! empty( $row['items']['data'] ) && is_array( $row['items']['data'] ) ) {
+		$first = $row['items']['data'][0];
+		if ( is_array( $first ) && isset( $first['price'] ) ) {
+			$p = $first['price'];
+			if ( is_string( $p ) && preg_match( '/^price_[a-zA-Z0-9]+$/', $p ) ) {
+				$price_id = $p;
+			} elseif ( is_array( $p ) && ! empty( $p['id'] ) && is_string( $p['id'] ) ) {
+				$price_id = (string) $p['id'];
+			}
+		}
+	}
+
+	$schedule_id = arsenal_settings_stripe_subscription_row_schedule_id( $row );
+
+	$summary = array(
+		'id'                     => (string) $row['id'],
+		'status'                 => isset( $row['status'] ) ? (string) $row['status'] : '',
+		'cancel_at_period_end'   => ! empty( $row['cancel_at_period_end'] ),
+		'current_period_start'   => arsenal_settings_rest_subscription_int_field( $row, 'current_period_start' ),
+		'current_period_end'     => arsenal_settings_rest_subscription_int_field( $row, 'current_period_end' ),
+		'canceled_at'            => arsenal_settings_rest_subscription_int_field( $row, 'canceled_at' ),
+		'price_id'               => $price_id,
+	);
+	if ( $schedule_id !== '' ) {
+		$summary['subscription_schedule_id'] = $schedule_id;
+	}
+	return $summary;
+}
+
+/**
  * Build success or error REST response after Stripe subscription create (shared shape).
  *
  * @param array|WP_Error $result           Decoded subscription from Stripe or WP_Error.
@@ -2704,6 +2981,130 @@ function arsenal_settings_rest_check_user_subscription() {
 	);
 
 	return new WP_REST_Response( $body, 200 );
+}
+
+/**
+ * REST callback: cancel-subscription-by-email — cancels Stripe subscription(s) for the customer resolved from email.
+ *
+ * POST JSON or form body:
+ * - customer_email (required): billing email used in Stripe.
+ * - immediate (optional, default false): for subscriptions **without** a Subscription Schedule: when false, sets cancel_at_period_end; when true, DELETE subscription. If the subscription has a **schedule** (sub_sched_…), Stripe’s
+ *   `POST /v1/subscription_schedules/{id}/cancel` is used instead (see Stripe docs — this ends the schedule and managed subscription; the `immediate` flag does not apply to that path).
+ *
+ * All subscriptions in a cancellable state (active, trialing, past_due, unpaid, incomplete) for that customer are updated.
+ *
+ * On success or partial success, the response includes **customer_subscriptions**: subscriptions still attached to the
+ * customer after cancellation, excluding ended statuses (`canceled`, `incomplete_expired`). Stripe does not delete
+ * canceled subscription objects; they are omitted from this list only. Subscriptions with `cancel_at_period_end` and
+ * status `active` remain until the period ends; use **immediate**: true to end them immediately so they leave this list.
+ *
+ * @param WP_REST_Request $request Request.
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_cancel_subscription_by_email( WP_REST_Request $request ) {
+	arsenal_settings_api_process_log( 'callback_enter', array( 'callback' => 'arsenal_settings_rest_cancel_subscription_by_email' ) );
+	$email = trim( (string) $request->get_param( 'customer_email' ) );
+	if ( ! is_email( $email ) ) {
+		return new WP_REST_Response(
+			array(
+				'message' => __( 'Provide a valid customer_email.', 'arsenal-settings' ),
+				'status'  => false,
+				'code'    => 'invalid_customer_email',
+			),
+			400
+		);
+	}
+
+	$immediate = (bool) $request->get_param( 'immediate' );
+
+	$customer_res = arsenal_settings_rest_get_stripe_customer_id( '', $email, false, '' );
+	if ( is_wp_error( $customer_res ) ) {
+		return arsenal_settings_rest_from_wp_error( $customer_res );
+	}
+	$customer_id = $customer_res;
+
+	$list = arsenal_settings_stripe_list_subscriptions_for_customer( $customer_id );
+	if ( is_wp_error( $list ) ) {
+		return arsenal_settings_rest_from_wp_error( $list );
+	}
+
+	$cancellable_statuses = array( 'active', 'trialing', 'past_due', 'unpaid', 'incomplete' );
+	$to_cancel            = array();
+	foreach ( $list as $row ) {
+		if ( ! is_array( $row ) || empty( $row['id'] ) || empty( $row['status'] ) ) {
+			continue;
+		}
+		$st = (string) $row['status'];
+		if ( in_array( $st, $cancellable_statuses, true ) ) {
+			$to_cancel[] = (string) $row['id'];
+		}
+	}
+
+	if ( empty( $to_cancel ) ) {
+		return new WP_REST_Response(
+			array(
+				'message'      => __( 'No active Stripe subscriptions found for that email.', 'arsenal-settings' ),
+				'status'       => false,
+				'code'         => 'no_subscriptions_to_cancel',
+				'customer_id'  => $customer_id,
+			),
+			404
+		);
+	}
+
+	$results                 = array();
+	$errors                  = array();
+	$schedule_result_cache   = array();
+	foreach ( $to_cancel as $sub_id ) {
+		$done = arsenal_settings_stripe_subscription_cancel( $sub_id, $immediate, $schedule_result_cache );
+		if ( is_wp_error( $done ) ) {
+			$errors[] = array(
+				'subscription_id' => $sub_id,
+				'code'            => $done->get_error_code(),
+				'message'         => $done->get_error_message(),
+				'data'            => $done->get_error_data(),
+			);
+			continue;
+		}
+		$is_schedule = is_array( $done ) && isset( $done['object'] ) && 'subscription_schedule' === $done['object'];
+		$results[]   = array(
+			'subscription_id'            => $sub_id,
+			'subscription_schedule_id'   => $is_schedule && ! empty( $done['id'] ) ? (string) $done['id'] : null,
+			'cancellation_method'        => $is_schedule
+				? 'subscription_schedule_cancel'
+				: ( $immediate ? 'subscription_delete' : 'subscription_cancel_at_period_end' ),
+			'status'                     => isset( $done['status'] ) ? (string) $done['status'] : '',
+			'cancel_at_period_end'       => ! $is_schedule && ! empty( $done['cancel_at_period_end'] ),
+			'canceled_at'                => isset( $done['canceled_at'] ) ? $done['canceled_at'] : null,
+			'current_period_end'         => ! $is_schedule && isset( $done['current_period_end'] ) ? $done['current_period_end'] : null,
+		);
+	}
+
+	$customer_subscriptions = array();
+	$remaining              = arsenal_settings_stripe_list_subscriptions_for_customer( $customer_id, true );
+	if ( ! is_wp_error( $remaining ) && is_array( $remaining ) ) {
+		foreach ( $remaining as $r ) {
+			if ( is_array( $r ) ) {
+				$customer_subscriptions[] = arsenal_settings_rest_subscription_row_public_summary( $r );
+			}
+		}
+	}
+
+	$ok = empty( $errors );
+	return new WP_REST_Response(
+		array(
+			'message'     => $ok
+				? __( 'Subscription(s) canceled successfully.', 'arsenal-settings' )
+				: __( 'Some subscriptions could not be canceled; see errors.', 'arsenal-settings' ),
+			'status'      => $ok,
+			'code'        => $ok ? 'ok' : 'partial_failure',
+			'customer_id' => $customer_id,
+			'subscriptions' => $results,
+			'errors'      => $errors,
+			'customer_subscriptions' => $customer_subscriptions,
+		),
+		$ok ? 200 : 207
+	);
 }
 
 /**
