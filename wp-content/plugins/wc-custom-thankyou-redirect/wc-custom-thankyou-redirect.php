@@ -191,16 +191,16 @@ add_filter(
     2
 );
 
-// /**
-//  * Default user meta: subscription_plan for new registrations (including WooCommerce customers).
-//  */
-// add_action( 'user_register', 'wc_custom_thankyou_set_subscription_plan_on_register', 10, 1 );
+/**
+ * Default user meta: subscription_plan for new registrations (including WooCommerce customers).
+ */
+add_action( 'user_register', 'wc_custom_thankyou_set_subscription_plan_on_register', 10, 1 );
 
-// function wc_custom_thankyou_set_subscription_plan_on_register( $user_id ) {
-//     $user_id = (int) $user_id;
-//     if ( $user_id <= 0 ) {
-//         return;
-//     }
+function wc_custom_thankyou_set_subscription_plan_on_register( $user_id ) {
+    $user_id = (int) $user_id;
+    if ( $user_id <= 0 ) {
+        return;
+    }
 
-//     update_user_meta( $user_id, 'subscription_plan', 'membership approved' );
-// }
+    update_user_meta( $user_id, 'subscription_plan', 'membership approved' );
+}
