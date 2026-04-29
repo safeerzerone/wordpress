@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Custom Thank You Redirect
  * Description: Redirect WooCommerce checkout success page to a custom thank you page.
- * Version: 1.0
+ * Version: 1.2
  * Author: Zerone
  */
 
@@ -132,7 +132,7 @@ add_filter(
         $plan_map     = wc_wpf_armember_plan_maps()['id_to_label'];
         $crm_field_id = (string) $crm_field;
 
-        $arm_meta_crm = $crm->get_crm_field( 'arm_user_plan' );
+        $arm_meta_crm = $crm->get_crm_field( 'arm_user_plan_2' );
         if ( $arm_meta_crm && (string) $arm_meta_crm === $crm_field_id ) {
             if ( is_array( $value ) ) {
                 $value = reset( $value );
@@ -171,9 +171,9 @@ add_filter(
             return $user_meta;
         }
 
-        if ( array_key_exists( 'arm_user_plan', $user_meta ) ) {
-            $user_meta['arm_user_plan'] = wc_wpf_armember_crm_value_to_plan_ids(
-                $user_meta['arm_user_plan'],
+        if ( array_key_exists( 'arm_user_plan_2', $user_meta ) ) {
+            $user_meta['arm_user_plan_2'] = wc_wpf_armember_crm_value_to_plan_ids(
+                $user_meta['arm_user_plan_2'],
                 false
             );
         }
@@ -190,3 +190,17 @@ add_filter(
     10,
     2
 );
+
+// /**
+//  * Default user meta: subscription_plan for new registrations (including WooCommerce customers).
+//  */
+// add_action( 'user_register', 'wc_custom_thankyou_set_subscription_plan_on_register', 10, 1 );
+
+// function wc_custom_thankyou_set_subscription_plan_on_register( $user_id ) {
+//     $user_id = (int) $user_id;
+//     if ( $user_id <= 0 ) {
+//         return;
+//     }
+
+//     update_user_meta( $user_id, 'subscription_plan', 'membership approved' );
+// }
