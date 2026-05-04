@@ -2,12 +2,39 @@
 /**
  * Plugin Name: WooCommerce Custom Thank You Redirect
  * Description: Redirect WooCommerce checkout success page to a custom thank you page.
- * Version: 1.2
+ * Version: 1.5
  * Author: Zerone
  */
 
 if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
+}
+
+/** ARMember plan ID for recurring annual (see wc_wpf_armember_plan_maps). */
+if ( ! defined( 'WC_CUSTOM_THANKYOU_RECURRING_PLAN_ID' ) ) {
+    define( 'WC_CUSTOM_THANKYOU_RECURRING_PLAN_ID', 1 );
+}
+
+/** User meta `payment_method_for_cms` must match this to set `remove_recurring_subscription` true. */
+if ( ! defined( 'WC_CUSTOM_THANKYOU_CMS_PAYMENT_BACS_DIRECT_DEBIT' ) ) {
+    define( 'WC_CUSTOM_THANKYOU_CMS_PAYMENT_BACS_DIRECT_DEBIT', 'Bacs Direct Debit' );
+}
+
+/**
+ * Only users with payment_method_for_cms = Bacs Direct Debit get remove_recurring_subscription set true.
+ *
+ * @param int $user_id User ID.
+ */
+function wc_custom_thankyou_user_qualifies_for_remove_recurring_flag( $user_id ) {
+    $user_id = (int) $user_id;
+    if ( $user_id <= 0 ) {
+        return false;
+    }
+
+    $cms_method = get_user_meta( $user_id, 'payment_method_for_cms', true );
+    $cms_method = is_string( $cms_method ) ? trim( $cms_method ) : '';
+
+    return $cms_method === WC_CUSTOM_THANKYOU_CMS_PAYMENT_BACS_DIRECT_DEBIT;
 }
 
 /**
@@ -203,4 +230,100 @@ function wc_custom_thankyou_set_subscription_plan_on_register( $user_id ) {
     }
 
     update_user_meta( $user_id, 'subscription_plan', 'membership approved' );
+    update_user_meta( $user_id, 'remove_recurring_subscription', false );
+}
+
+/**
+ * Normalize ARMember plan IDs from user meta to a unique list of integers.
+ *
+ * @param mixed $value Stored meta value.
+ * @return int[]
+ */
+function wc_custom_thankyou_normalize_arm_plan_ids( $value ) {
+    if ( null === $value || '' === $value ) {
+        return array();
+    }
+    if ( ! is_array( $value ) ) {
+        return array( (int) $value );
+    }
+    $ids = array();
+    foreach ( $value as $v ) {
+        $ids[] = (int) $v;
+    }
+
+    return array_values( array_unique( $ids ) );
+}
+
+/**
+ * When admin (or ARMember) drops recurring plan from arm_user_plan_ids, flag remove_recurring_subscription.
+ * Fires before DB write so get_user_meta still reflects the previous value.
+ */
+add_action( 'update_user_meta', 'wc_custom_thankyou_sync_remove_recurring_on_plan_ids_update', 10, 4 );
+
+function wc_custom_thankyou_sync_remove_recurring_on_plan_ids_update( $meta_id, $user_id, $meta_key, $new_value ) {
+    if ( 'arm_user_plan_ids' !== $meta_key ) {
+        return;
+    }
+    $user_id = (int) $user_id;
+    if ( $user_id <= 0 ) {
+        return;
+    }
+
+    $old_ids = wc_custom_thankyou_normalize_arm_plan_ids( get_user_meta( $user_id, 'arm_user_plan_ids', true ) );
+    $new_ids = wc_custom_thankyou_normalize_arm_plan_ids( $new_value );
+
+    $rid           = (int) WC_CUSTOM_THANKYOU_RECURRING_PLAN_ID;
+    $had_recurring = in_array( $rid, $old_ids, true );
+    $has_recurring = in_array( $rid, $new_ids, true );
+
+    if ( $had_recurring && ! $has_recurring && wc_custom_thankyou_user_qualifies_for_remove_recurring_flag( $user_id ) ) {
+        update_user_meta( $user_id, 'remove_recurring_subscription', true );
+    } elseif ( $has_recurring ) {
+        update_user_meta( $user_id, 'remove_recurring_subscription', false );
+    }
+}
+
+/**
+ * Before arm_user_plan_ids is removed (e.g. last plan in ARMember Manage Plans). WordPress often calls
+ * delete_user_meta( $id, 'arm_user_plan_ids' ) without a meta value, so deleted_user_meta's value is empty.
+ */
+add_action( 'delete_user_meta', 'wc_custom_thankyou_sync_remove_recurring_on_plan_ids_pre_delete', 10, 4 );
+
+function wc_custom_thankyou_sync_remove_recurring_on_plan_ids_pre_delete( $meta_ids, $user_id, $meta_key, $meta_value ) {
+    if ( 'arm_user_plan_ids' !== $meta_key ) {
+        return;
+    }
+    $user_id = (int) $user_id;
+    if ( $user_id <= 0 ) {
+        return;
+    }
+
+    $ids = wc_custom_thankyou_normalize_arm_plan_ids( get_user_meta( $user_id, 'arm_user_plan_ids', true ) );
+    if ( in_array( (int) WC_CUSTOM_THANKYOU_RECURRING_PLAN_ID, $ids, true ) && wc_custom_thankyou_user_qualifies_for_remove_recurring_flag( $user_id ) ) {
+        update_user_meta( $user_id, 'remove_recurring_subscription', true );
+    }
+}
+
+/**
+ * ARMember admin: Members → Manage Plans popup removes a plan via arm_user_plan_action (arm_action=delete).
+ * That path calls arm_clear_user_plan_detail then fires arm_after_cancel_subscription on success — not always
+ * a single update_user_meta edge case, so we tie the flag to the cancelled plan ID and current meta.
+ */
+add_action( 'arm_after_cancel_subscription', 'wc_custom_thankyou_on_arm_after_cancel_subscription', 20, 4 );
+
+function wc_custom_thankyou_on_arm_after_cancel_subscription( $user_id, $plan_obj, $cancel_plan_action, $plan_data ) {
+    $user_id = (int) $user_id;
+    if ( $user_id <= 0 || ! is_object( $plan_obj ) ) {
+        return;
+    }
+
+    $plan_id = isset( $plan_obj->ID ) ? (int) $plan_obj->ID : 0;
+    if ( $plan_id !== (int) WC_CUSTOM_THANKYOU_RECURRING_PLAN_ID ) {
+        return;
+    }
+
+    $remaining = wc_custom_thankyou_normalize_arm_plan_ids( get_user_meta( $user_id, 'arm_user_plan_ids', true ) );
+    if ( ! in_array( (int) WC_CUSTOM_THANKYOU_RECURRING_PLAN_ID, $remaining, true ) && wc_custom_thankyou_user_qualifies_for_remove_recurring_flag( $user_id ) ) {
+        update_user_meta( $user_id, 'remove_recurring_subscription', true );
+    }
 }
