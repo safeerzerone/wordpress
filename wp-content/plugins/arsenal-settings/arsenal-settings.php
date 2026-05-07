@@ -3500,6 +3500,119 @@ function arsenal_settings_rest_merge_deferred_armember_plan_request_params( WP_R
 }
 
 /**
+ * Resolve ARMember payment log table name (full core, lite, or prefixed fallback).
+ *
+ * @return string
+ */
+function arsenal_settings_get_armember_payment_log_table() {
+	global $wpdb, $ARMember, $ARMemberLite;
+
+	if ( is_object( $ARMember ) && ! empty( $ARMember->tbl_arm_payment_log ) ) {
+		return $ARMember->tbl_arm_payment_log;
+	}
+	if ( is_object( $ARMemberLite ) && ! empty( $ARMemberLite->tbl_arm_payment_log ) ) {
+		return $ARMemberLite->tbl_arm_payment_log;
+	}
+
+	return $wpdb->prefix . 'arm_payment_log';
+}
+
+/**
+ * After a successful Stripe subscription create on the deferred ARMember-plan endpoint, update the latest matching payment log row.
+ *
+ * Matches ARMember Stripe gateway behaviour: arm_token and arm_transaction_id store the Stripe subscription id (sub_…) for
+ * recurring subscriptions; arm_payment_mode is set to auto_debit_subscription. Targets the newest log for the same user, plan,
+ * and payment cycle.
+ *
+ * @param string $customer_email WordPress user email.
+ * @param int    $plan_id        ARMember arm_subscription_plan_id.
+ * @param int    $payment_cycle  Plan payment cycle index (same as request payment_cycle).
+ * @param array  $subscription   Decoded Stripe Subscription object from the create response.
+ * @return bool True when a row was updated.
+ */
+function arsenal_settings_sync_arm_payment_log_deferred_subscription( $customer_email, $plan_id, $payment_cycle, array $subscription ) {
+	global $wpdb;
+
+	$plan_id       = (int) $plan_id;
+	$payment_cycle = (int) $payment_cycle;
+
+	if ( $plan_id < 1 || empty( $subscription['id'] ) || ! preg_match( '/^sub_[a-zA-Z0-9]+$/', (string) $subscription['id'] ) ) {
+		return false;
+	}
+
+	$user = get_user_by( 'email', $customer_email );
+	if ( ! $user || empty( $user->ID ) ) {
+		arsenal_settings_api_process_log(
+			'arm_payment_log_sync_skip',
+			array(
+				'reason' => 'user_not_found',
+				'email'  => $customer_email,
+			)
+		);
+		return false;
+	}
+
+	$table  = arsenal_settings_get_armember_payment_log_table();
+	$sub_id = (string) $subscription['id'];
+
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from trusted ARMember global or prefix.
+	$sql = $wpdb->prepare(
+		"SELECT `arm_log_id` FROM `{$table}` WHERE `arm_user_id` = %d AND `arm_plan_id` = %d AND `arm_payment_cycle` = %d ORDER BY `arm_log_id` DESC LIMIT 1",
+		(int) $user->ID,
+		$plan_id,
+		$payment_cycle
+	);
+
+	$log_id = $wpdb->get_var( $sql );
+	if ( ! $log_id ) {
+		arsenal_settings_api_process_log(
+			'arm_payment_log_sync_skip',
+			array(
+				'reason'        => 'no_matching_log',
+				'user_id'       => (int) $user->ID,
+				'plan_id'       => $plan_id,
+				'payment_cycle' => $payment_cycle,
+			)
+		);
+		return false;
+	}
+
+	$updated = $wpdb->update(
+		$table,
+		array(
+			'arm_token'            => $sub_id,
+			'arm_transaction_id'   => $sub_id,
+			'arm_payment_mode'     => 'auto_debit_subscription',
+		),
+		array( 'arm_log_id' => (int) $log_id ),
+		array( '%s', '%s', '%s' ),
+		array( '%d' )
+	);
+
+	if ( false === $updated ) {
+		arsenal_settings_api_process_log(
+			'arm_payment_log_sync_error',
+			array(
+				'arm_log_id' => (int) $log_id,
+				'db_error'   => $wpdb->last_error,
+			)
+		);
+		return false;
+	}
+
+	arsenal_settings_api_process_log(
+		'arm_payment_log_sync_ok',
+		array(
+			'arm_log_id'       => (int) $log_id,
+			'arm_token'        => $sub_id,
+			'rows_affected'    => (int) $updated,
+		)
+	);
+
+	return true;
+}
+
+/**
  * REST callback: create-recurring-subscription-by-armember-plan-deferred — same plan resolution as by-armember-plan, but no initial charge on this request.
  *
  * Accepts **GET** (query string), **POST** (form-encoded or multipart), or **POST** with a **JSON object** or **JSON array**
@@ -3510,6 +3623,11 @@ function arsenal_settings_rest_merge_deferred_armember_plan_request_params( WP_R
  * default sets trial_period_days to one approximate billing period so the first paid charge aligns with the first renewal
  * (set defer_first_billing_period false and pass trial_period_days yourself to customize). Invoice finalize/pay automation
  * in the success response is skipped so this call does not collect the first payment.
+ *
+ * On successful Stripe subscription creation, the latest `wp_arm_payment_log` row for the same WordPress user,
+ * `armember_plan_id`, and `payment_cycle` is updated with `arm_token` and `arm_transaction_id` set to the Stripe
+ * subscription id (`sub_…`), and `arm_payment_mode` set to `auto_debit_subscription`, consistent with ARMember’s Stripe
+ * recurring subscription logging.
  *
  * @param WP_REST_Request $request Request.
  * @return WP_REST_Response
@@ -3603,6 +3721,10 @@ function arsenal_settings_rest_create_recurring_subscription_by_armember_plan_de
 		$resolved['inline'],
 		$stripe_extra
 	);
+
+	if ( ! is_wp_error( $result ) && is_array( $result ) ) {
+		arsenal_settings_sync_arm_payment_log_deferred_subscription( $email, $plan_id, $payment_cycle, $result );
+	}
 
 	return arsenal_settings_rest_subscription_created_response(
 		$result,
