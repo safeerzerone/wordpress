@@ -3557,14 +3557,14 @@ function arsenal_settings_sync_arm_payment_log_deferred_subscription( $customer_
 
 	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from trusted ARMember global or prefix.
 	$sql = $wpdb->prepare(
-		"SELECT `arm_log_id` FROM `{$table}` WHERE `arm_user_id` = %d AND `arm_plan_id` = %d AND `arm_payment_cycle` = %d ORDER BY `arm_log_id` DESC LIMIT 1",
+		"SELECT `arm_log_id`, `arm_extra_vars` FROM `{$table}` WHERE `arm_user_id` = %d AND `arm_plan_id` = %d AND `arm_payment_cycle` = %d ORDER BY `arm_log_id` DESC LIMIT 1",
 		(int) $user->ID,
 		$plan_id,
 		$payment_cycle
 	);
 
-	$log_id = $wpdb->get_var( $sql );
-	if ( ! $log_id ) {
+	$log_row = $wpdb->get_row( $sql, ARRAY_A );
+	if ( empty( $log_row['arm_log_id'] ) ) {
 		arsenal_settings_api_process_log(
 			'arm_payment_log_sync_skip',
 			array(
@@ -3576,6 +3576,33 @@ function arsenal_settings_sync_arm_payment_log_deferred_subscription( $customer_
 		);
 		return false;
 	}
+	$log_id = (int) $log_row['arm_log_id'];
+
+	$extra_vars = array();
+	if ( isset( $log_row['arm_extra_vars'] ) && '' !== (string) $log_row['arm_extra_vars'] ) {
+		$decoded = maybe_unserialize( $log_row['arm_extra_vars'] );
+		if ( is_array( $decoded ) ) {
+			$extra_vars = $decoded;
+		} elseif ( is_string( $decoded ) ) {
+			$json_decoded = json_decode( $decoded, true );
+			if ( is_array( $json_decoded ) ) {
+				$extra_vars = $json_decoded;
+			}
+		}
+	}
+
+	$extra_vars['arsenal_source']             = 'create-recurring-subscription-by-armember-plan-deferred';
+	$extra_vars['arsenal_synced_at']          = current_time( 'mysql' );
+	$extra_vars['arm_subscription_id']        = $sub_id;
+	$extra_vars['arm_stripe_subscription_id'] = $sub_id;
+	if ( ! empty( $subscription['customer'] ) ) {
+		$extra_vars['arm_stripe_customer_id'] = (string) $subscription['customer'];
+	}
+	if ( isset( $subscription['status'] ) && '' !== (string) $subscription['status'] ) {
+		$extra_vars['arm_subscription_status'] = (string) $subscription['status'];
+	}
+
+	$serialized_extra_vars = maybe_serialize( $extra_vars );
 
 	$updated = $wpdb->update(
 		$table,
@@ -3583,9 +3610,10 @@ function arsenal_settings_sync_arm_payment_log_deferred_subscription( $customer_
 			'arm_token'            => $sub_id,
 			'arm_transaction_id'   => $sub_id,
 			'arm_payment_mode'     => 'auto_debit_subscription',
+			'arm_extra_vars'       => $serialized_extra_vars,
 		),
-		array( 'arm_log_id' => (int) $log_id ),
-		array( '%s', '%s', '%s' ),
+		array( 'arm_log_id' => $log_id ),
+		array( '%s', '%s', '%s', '%s' ),
 		array( '%d' )
 	);
 
@@ -3606,6 +3634,7 @@ function arsenal_settings_sync_arm_payment_log_deferred_subscription( $customer_
 			'arm_log_id'       => (int) $log_id,
 			'arm_token'        => $sub_id,
 			'rows_affected'    => (int) $updated,
+			'extra_vars_keys'  => array_keys( $extra_vars ),
 		)
 	);
 
@@ -3626,8 +3655,8 @@ function arsenal_settings_sync_arm_payment_log_deferred_subscription( $customer_
  *
  * On successful Stripe subscription creation, the latest `wp_arm_payment_log` row for the same WordPress user,
  * `armember_plan_id`, and `payment_cycle` is updated with `arm_token` and `arm_transaction_id` set to the Stripe
- * subscription id (`sub_…`), and `arm_payment_mode` set to `auto_debit_subscription`, consistent with ARMember’s Stripe
- * recurring subscription logging.
+ * subscription id (`sub_…`), `arm_payment_mode` set to `auto_debit_subscription`, and `arm_extra_vars` merged/updated
+ * with Stripe subscription metadata, consistent with ARMember’s Stripe recurring subscription logging.
  *
  * @param WP_REST_Request $request Request.
  * @return WP_REST_Response
