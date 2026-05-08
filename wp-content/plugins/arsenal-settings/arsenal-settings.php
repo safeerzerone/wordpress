@@ -3091,6 +3091,13 @@ function arsenal_settings_rest_cancel_subscription_by_email( WP_REST_Request $re
 	}
 
 	$ok = empty( $errors );
+	if ( $ok ) {
+		$user = get_user_by( 'email', $email );
+		if ( $user && ! empty( $user->ID ) ) {
+			update_user_meta( (int) $user->ID, 'remove_recurring_subscription', 0 );
+		}
+	}
+
 	return new WP_REST_Response(
 		array(
 			'message'     => $ok
