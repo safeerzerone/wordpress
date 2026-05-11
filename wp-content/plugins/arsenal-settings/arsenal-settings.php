@@ -2113,6 +2113,45 @@ function arsenal_settings_api_process_log( $message, array $extra = array() ) {
 }
 
 /**
+ * Allowed Arsenal log file names.
+ *
+ * @return string Regex without delimiters.
+ */
+function arsenal_settings_allowed_log_file_pattern() {
+	return '^(api|wc-stripe-arm-cron)-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$';
+}
+
+/**
+ * Append one NDJSON line to the WooCommerce Stripe ARMember cron log.
+ *
+ * @param string $message Short event name.
+ * @param array  $extra   Optional context.
+ */
+function arsenal_settings_wc_stripe_arm_cron_log( $message, array $extra = array() ) {
+	if ( ! arsenal_settings_api_logging_enabled() ) {
+		return;
+	}
+
+	$dir = arsenal_settings_api_log_ensure_dir();
+	if ( is_wp_error( $dir ) ) {
+		return;
+	}
+
+	$entry = array(
+		'timestamp' => current_time( 'mysql' ),
+		'event'     => (string) $message,
+		'extra'     => $extra ? arsenal_settings_api_redact_for_log( $extra ) : array(),
+	);
+	$file  = trailingslashit( $dir ) . 'wc-stripe-arm-cron-' . gmdate( 'Y-m-d' ) . '.log';
+	$line  = wp_json_encode( $entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+	if ( false === $line ) {
+		return;
+	}
+
+	file_put_contents( $file, $line . "\n", FILE_APPEND | LOCK_EX );
+}
+
+/**
  * Short string for logging a PHP callable (no invocations).
  *
  * @param mixed $cb Callable or null.
@@ -3649,6 +3688,974 @@ function arsenal_settings_sync_arm_payment_log_deferred_subscription( $customer_
 }
 
 /**
+ * Read WooCommerce order meta with HPOS-safe fallback.
+ *
+ * @param WC_Order $order WooCommerce order.
+ * @param string   $key   Meta key.
+ * @return mixed
+ */
+function arsenal_settings_wc_order_meta( $order, $key ) {
+	if ( is_object( $order ) && method_exists( $order, 'get_meta' ) ) {
+		return $order->get_meta( $key, true );
+	}
+
+	if ( is_object( $order ) && method_exists( $order, 'get_id' ) ) {
+		return get_post_meta( (int) $order->get_id(), $key, true );
+	}
+
+	return '';
+}
+
+/**
+ * Normalize an ARMember plan-id list stored in WooCommerce order meta.
+ *
+ * @param mixed $value Raw value.
+ * @return array<int,int>
+ */
+function arsenal_settings_normalize_arm_plan_ids( $value ) {
+	if ( is_string( $value ) && '' !== $value ) {
+		$value = maybe_unserialize( $value );
+	}
+	if ( ! is_array( $value ) ) {
+		return array();
+	}
+
+	$plan_ids = array();
+	foreach ( $value as $plan_id ) {
+		$plan_id = (int) $plan_id;
+		if ( $plan_id > 0 ) {
+			$plan_ids[] = $plan_id;
+		}
+	}
+
+	return array_values( array_unique( $plan_ids ) );
+}
+
+/**
+ * Resolve ARMember plan ids attached to a WooCommerce order.
+ *
+ * Renewal orders created by Subscriptions For WooCommerce may not copy ARMember's order meta, so this also falls back to
+ * parent order meta and product mapping meta.
+ *
+ * @param WC_Order $order WooCommerce order.
+ * @return array<int,int>
+ */
+function arsenal_settings_get_arm_plan_ids_for_wc_order( $order ) {
+	if ( ! is_object( $order ) || ! method_exists( $order, 'get_items' ) ) {
+		return array();
+	}
+
+	$plan_ids = arsenal_settings_normalize_arm_plan_ids( arsenal_settings_wc_order_meta( $order, 'arm_mapped_order_product_plans' ) );
+	if ( ! empty( $plan_ids ) ) {
+		return $plan_ids;
+	}
+
+	$parent_order_id = (int) arsenal_settings_wc_order_meta( $order, 'wps_sfw_parent_order_id' );
+	if ( $parent_order_id > 0 && function_exists( 'wc_get_order' ) ) {
+		$parent_order = wc_get_order( $parent_order_id );
+		if ( $parent_order ) {
+			$plan_ids = arsenal_settings_normalize_arm_plan_ids( arsenal_settings_wc_order_meta( $parent_order, 'arm_mapped_order_product_plans' ) );
+			if ( ! empty( $plan_ids ) ) {
+				return $plan_ids;
+			}
+		}
+	}
+
+	$plan_ids = array();
+	foreach ( $order->get_items() as $item ) {
+		if ( ! is_object( $item ) || ! method_exists( $item, 'get_product_id' ) ) {
+			continue;
+		}
+
+		$product_id = method_exists( $item, 'get_variation_id' ) && (int) $item->get_variation_id() > 0
+			? (int) $item->get_variation_id()
+			: (int) $item->get_product_id();
+		if ( $product_id < 1 ) {
+			continue;
+		}
+
+		$plan_id = (int) get_post_meta( $product_id, '_arm_woocommerce_membership_plan', true );
+		if ( $plan_id > 0 ) {
+			$plan_ids[] = $plan_id;
+		}
+	}
+
+	return array_values( array_unique( $plan_ids ) );
+}
+
+/**
+ * Resolve the order amount attributable to an ARMember plan from mapped WooCommerce products.
+ *
+ * @param WC_Order $order   WooCommerce order.
+ * @param int      $plan_id ARMember plan id.
+ * @return float
+ */
+function arsenal_settings_get_wc_order_plan_amount( $order, $plan_id ) {
+	if ( ! is_object( $order ) || ! method_exists( $order, 'get_items' ) ) {
+		return 0.0;
+	}
+
+	$amount = 0.0;
+	foreach ( $order->get_items() as $item ) {
+		if ( ! is_object( $item ) || ! method_exists( $item, 'get_product_id' ) ) {
+			continue;
+		}
+
+		$product_id = method_exists( $item, 'get_variation_id' ) && (int) $item->get_variation_id() > 0
+			? (int) $item->get_variation_id()
+			: (int) $item->get_product_id();
+		if ( $product_id < 1 || (int) get_post_meta( $product_id, '_arm_woocommerce_membership_plan', true ) !== (int) $plan_id ) {
+			continue;
+		}
+
+		$line_total = method_exists( $item, 'get_total' ) ? (float) $item->get_total() : 0.0;
+		$line_tax   = method_exists( $item, 'get_total_tax' ) ? (float) $item->get_total_tax() : 0.0;
+		$amount    += $line_total + $line_tax;
+	}
+
+	if ( $amount <= 0 && method_exists( $order, 'get_total' ) ) {
+		$amount = (float) $order->get_total();
+	}
+
+	return $amount;
+}
+
+/**
+ * Get an ARMember plan payment type without requiring callers to know ARM_Plan internals.
+ *
+ * @param int $plan_id ARMember plan id.
+ * @return string
+ */
+function arsenal_settings_get_arm_plan_payment_type( $plan_id ) {
+	if ( class_exists( 'ARM_Plan' ) ) {
+		$plan = new ARM_Plan( (int) $plan_id );
+		if ( is_object( $plan ) ) {
+			if ( method_exists( $plan, 'is_free' ) && $plan->is_free() ) {
+				return 'one_time';
+			}
+			if ( isset( $plan->options['payment_type'] ) && '' !== (string) $plan->options['payment_type'] ) {
+				return (string) $plan->options['payment_type'];
+			}
+		}
+	}
+
+	return '';
+}
+
+/**
+ * Return a date string suitable for ARMember payment-log fields.
+ *
+ * @param WC_Order $order WooCommerce order.
+ * @return string
+ */
+function arsenal_settings_get_wc_order_payment_date( $order ) {
+	$date = null;
+	if ( is_object( $order ) && method_exists( $order, 'get_date_paid' ) ) {
+		$date = $order->get_date_paid();
+	}
+	if ( ! $date && is_object( $order ) && method_exists( $order, 'get_date_created' ) ) {
+		$date = $order->get_date_created();
+	}
+
+	if ( is_object( $date ) && method_exists( $date, 'date' ) ) {
+		return $date->date( 'Y-m-d H:i:s' );
+	}
+
+	return current_time( 'mysql' );
+}
+
+/**
+ * Whether a WooCommerce Stripe order is paid, optionally verified directly with Stripe.
+ *
+ * @param WC_Order $order WooCommerce order.
+ * @return bool
+ */
+function arsenal_settings_wc_stripe_order_is_paid_or_verified( $order ) {
+	if ( ! is_object( $order ) ) {
+		return false;
+	}
+
+	$status = method_exists( $order, 'get_status' ) ? (string) $order->get_status() : '';
+	if ( in_array( $status, array( 'completed', 'processing', 'wps_renewal' ), true ) ) {
+		return true;
+	}
+
+	$intent_id = (string) arsenal_settings_wc_order_meta( $order, '_stripe_intent_id' );
+	if ( ! preg_match( '/^pi_[a-zA-Z0-9]+$/', $intent_id ) ) {
+		return false;
+	}
+
+	$result = arsenal_settings_stripe_api_get( 'payment_intents/' . rawurlencode( $intent_id ) );
+	if ( is_wp_error( $result ) || ! is_array( $result ) ) {
+		return false;
+	}
+
+	return isset( $result['status'] ) && 'succeeded' === (string) $result['status'];
+}
+
+/**
+ * Convert a WooCommerce/Subscriptions For WooCommerce date value into an ARMember timestamp.
+ *
+ * @param mixed $value Date string or timestamp.
+ * @return int
+ */
+function arsenal_settings_parse_arm_timestamp( $value ) {
+	if ( is_numeric( $value ) ) {
+		return max( 0, (int) $value );
+	}
+
+	if ( is_string( $value ) && '' !== trim( $value ) ) {
+		$timestamp = strtotime( $value );
+		return false === $timestamp ? 0 : (int) $timestamp;
+	}
+
+	return 0;
+}
+
+/**
+ * Normalize ARMember payment-log extra vars to an array.
+ *
+ * @param mixed $raw Raw DB value.
+ * @return array
+ */
+function arsenal_settings_arm_payment_log_extra_vars_array( $raw ) {
+	if ( '' === (string) $raw ) {
+		return array();
+	}
+
+	$decoded = maybe_unserialize( $raw );
+	if ( is_array( $decoded ) ) {
+		return $decoded;
+	}
+
+	if ( is_string( $decoded ) ) {
+		$json_decoded = json_decode( $decoded, true );
+		if ( is_array( $json_decoded ) ) {
+			return $json_decoded;
+		}
+	}
+
+	return array();
+}
+
+/**
+ * Get latest invoice object from a Stripe subscription.
+ *
+ * @param array $subscription Stripe subscription.
+ * @return array
+ */
+function arsenal_settings_stripe_subscription_latest_invoice( array $subscription ) {
+	$latest = isset( $subscription['latest_invoice'] ) ? $subscription['latest_invoice'] : null;
+	if ( is_array( $latest ) ) {
+		return $latest;
+	}
+
+	if ( is_string( $latest ) && preg_match( '/^in_[a-zA-Z0-9]+$/', $latest ) ) {
+		$invoice = arsenal_settings_stripe_api_get(
+			arsenal_settings_stripe_path_with_query(
+				'invoices/' . rawurlencode( $latest ),
+				array( 'expand' => array( 'payment_intent' ) )
+			)
+		);
+		if ( ! is_wp_error( $invoice ) && is_array( $invoice ) && isset( $invoice['object'] ) && 'invoice' === $invoice['object'] ) {
+			return $invoice;
+		}
+	}
+
+	return array();
+}
+
+/**
+ * Whether a Stripe subscription/invoice is a credible successful payment for an ARMember failed row.
+ *
+ * @param array $subscription Stripe subscription.
+ * @param array $invoice      Stripe invoice.
+ * @param array $failed_row   ARMember payment-log row.
+ * @return bool
+ */
+function arsenal_settings_stripe_subscription_matches_failed_arm_log( array $subscription, array $invoice, array $failed_row ) {
+	$status = isset( $subscription['status'] ) ? (string) $subscription['status'] : '';
+	if ( ! in_array( $status, array( 'active', 'trialing' ), true ) ) {
+		return false;
+	}
+
+	$current_period_end = isset( $subscription['current_period_end'] ) ? (int) $subscription['current_period_end'] : 0;
+	if ( $current_period_end > 0 && $current_period_end < current_time( 'timestamp' ) ) {
+		return false;
+	}
+
+	$metadata = isset( $subscription['metadata'] ) && is_array( $subscription['metadata'] ) ? $subscription['metadata'] : array();
+	$plan_id  = isset( $failed_row['arm_plan_id'] ) ? (int) $failed_row['arm_plan_id'] : 0;
+	foreach ( array( 'armember_plan_id', 'arm_plan_id', 'plan_id' ) as $meta_key ) {
+		if ( isset( $metadata[ $meta_key ] ) && (int) $metadata[ $meta_key ] === $plan_id ) {
+			return true;
+		}
+	}
+
+	$failed_currency = isset( $failed_row['arm_currency'] ) ? strtolower( (string) $failed_row['arm_currency'] ) : '';
+	$failed_amount   = isset( $failed_row['arm_amount'] ) ? (float) $failed_row['arm_amount'] : 0.0;
+	$expected_minor  = $failed_amount > 0 ? (int) round( $failed_amount * 100 ) : 0;
+	$subscription_amount_matches = false;
+	if ( ! empty( $subscription['items']['data'] ) && is_array( $subscription['items']['data'] ) ) {
+		foreach ( $subscription['items']['data'] as $item ) {
+			$price = isset( $item['price'] ) && is_array( $item['price'] ) ? $item['price'] : array();
+			$unit_amount = isset( $price['unit_amount'] ) ? (int) $price['unit_amount'] : 0;
+			$currency = isset( $price['currency'] ) ? strtolower( (string) $price['currency'] ) : '';
+			if (
+				$expected_minor > 0
+				&& $unit_amount > 0
+				&& abs( $unit_amount - $expected_minor ) <= 1
+				&& ( '' === $failed_currency || '' === $currency || $failed_currency === $currency )
+			) {
+				$subscription_amount_matches = true;
+				break;
+			}
+		}
+	}
+
+	$invoice_status = isset( $invoice['status'] ) ? (string) $invoice['status'] : '';
+	$amount_paid    = isset( $invoice['amount_paid'] ) ? (int) $invoice['amount_paid'] : 0;
+	if ( 'paid' !== $invoice_status && $amount_paid <= 0 ) {
+		return $current_period_end > current_time( 'timestamp' ) && $subscription_amount_matches;
+	}
+
+	$invoice_currency = isset( $invoice['currency'] ) ? strtolower( (string) $invoice['currency'] ) : '';
+	if ( $failed_currency !== '' && $invoice_currency !== '' && $failed_currency !== $invoice_currency ) {
+		return false;
+	}
+
+	if ( $failed_amount > 0 && $amount_paid > 0 ) {
+		return abs( $amount_paid - $expected_minor ) <= 1;
+	}
+
+	return $current_period_end > current_time( 'timestamp' );
+}
+
+/**
+ * Find an active/paid Stripe subscription that explains an ARMember WooCommerce failed row.
+ *
+ * @param WP_User $user       WordPress user.
+ * @param array   $failed_row ARMember payment-log row.
+ * @return array|WP_Error Empty array when none found; otherwise subscription/invoice identifiers.
+ */
+function arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, array $failed_row ) {
+	if ( ! $user || empty( $user->user_email ) || ! is_email( $user->user_email ) ) {
+		return array();
+	}
+
+	$customer_id = arsenal_settings_stripe_find_customer_id_by_email( (string) $user->user_email );
+	if ( is_wp_error( $customer_id ) || '' === $customer_id ) {
+		return $customer_id;
+	}
+
+	$subscriptions = arsenal_settings_stripe_list_subscriptions_for_customer( $customer_id, true );
+	if ( is_wp_error( $subscriptions ) ) {
+		return $subscriptions;
+	}
+
+	foreach ( $subscriptions as $subscription ) {
+		if ( empty( $subscription['id'] ) || ! preg_match( '/^sub_[a-zA-Z0-9]+$/', (string) $subscription['id'] ) ) {
+			continue;
+		}
+
+		$full_subscription = arsenal_settings_stripe_get_subscription(
+			(string) $subscription['id'],
+			array( 'latest_invoice.payment_intent', 'items.data.price' )
+		);
+		if ( is_wp_error( $full_subscription ) || ! is_array( $full_subscription ) ) {
+			continue;
+		}
+
+		$invoice = arsenal_settings_stripe_subscription_latest_invoice( $full_subscription );
+		if ( ! arsenal_settings_stripe_subscription_matches_failed_arm_log( $full_subscription, $invoice, $failed_row ) ) {
+			continue;
+		}
+
+		$payment_intent = isset( $invoice['payment_intent'] ) ? $invoice['payment_intent'] : null;
+		$payment_intent_id = is_array( $payment_intent ) && ! empty( $payment_intent['id'] ) ? (string) $payment_intent['id'] : '';
+		$latest_charge_id  = is_array( $payment_intent ) && ! empty( $payment_intent['latest_charge'] ) ? (string) $payment_intent['latest_charge'] : '';
+
+		return array(
+			'customer_id'        => $customer_id,
+			'subscription_id'    => (string) $full_subscription['id'],
+			'subscription_status' => isset( $full_subscription['status'] ) ? (string) $full_subscription['status'] : '',
+			'current_period_end' => isset( $full_subscription['current_period_end'] ) ? (int) $full_subscription['current_period_end'] : 0,
+			'invoice_id'         => isset( $invoice['id'] ) ? (string) $invoice['id'] : '',
+			'invoice_status'     => isset( $invoice['status'] ) ? (string) $invoice['status'] : '',
+			'amount_paid'        => isset( $invoice['amount_paid'] ) ? (int) $invoice['amount_paid'] : 0,
+			'currency'           => isset( $invoice['currency'] ) ? (string) $invoice['currency'] : '',
+			'payment_intent_id'  => $payment_intent_id,
+			'latest_charge_id'   => $latest_charge_id,
+		);
+	}
+
+	return array();
+}
+
+/**
+ * Restore an ARMember plan from a verified direct Stripe subscription payment.
+ *
+ * @param int   $user_id       WordPress user id.
+ * @param int   $plan_id       ARMember plan id.
+ * @param array $stripe_match  Match data from Stripe.
+ */
+function arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id, array $stripe_match ) {
+	global $arm_subscription_plans;
+
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return;
+	}
+
+	$suspended_plan_ids = get_user_meta( $user_id, 'arm_user_suspended_plan_ids', true );
+	$suspended_plan_ids = is_array( $suspended_plan_ids ) ? array_map( 'intval', $suspended_plan_ids ) : array();
+	if ( in_array( $plan_id, $suspended_plan_ids, true ) ) {
+		update_user_meta( $user_id, 'arm_user_suspended_plan_ids', array_values( array_diff( $suspended_plan_ids, array( $plan_id ) ) ) );
+	}
+
+	$default_plan_data = is_object( $arm_subscription_plans ) && method_exists( $arm_subscription_plans, 'arm_default_plan_array' )
+		? $arm_subscription_plans->arm_default_plan_array()
+		: array();
+	$user_plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	$user_plan_data = is_array( $user_plan_data ) ? $user_plan_data : array();
+	if ( ! empty( $default_plan_data ) ) {
+		$user_plan_data = shortcode_atts( $default_plan_data, $user_plan_data );
+	}
+	if ( empty( $user_plan_data ) ) {
+		return;
+	}
+
+	$active_plan_ids = get_user_meta( $user_id, 'arm_user_plan_ids', true );
+	$active_plan_ids = is_array( $active_plan_ids ) ? array_map( 'intval', $active_plan_ids ) : array();
+	if ( ! in_array( $plan_id, $active_plan_ids, true ) ) {
+		$active_plan_ids[] = $plan_id;
+		update_user_meta( $user_id, 'arm_user_plan_ids', array_values( array_unique( $active_plan_ids ) ) );
+	}
+
+	$user_plan_data['arm_user_gateway']         = 'woocommerce';
+	$user_plan_data['arm_payment_mode']         = 'manual_subscription';
+	$user_plan_data['arm_cencelled_plan']       = '';
+	$user_plan_data['arm_is_user_in_grace']     = '0';
+	$user_plan_data['arm_grace_period_end']     = '';
+	$user_plan_data['arm_grace_period_action']  = '';
+	if ( ! empty( $stripe_match['current_period_end'] ) && (int) $stripe_match['current_period_end'] > current_time( 'timestamp' ) ) {
+		$user_plan_data['arm_next_due_payment'] = (int) $stripe_match['current_period_end'];
+		if ( ! empty( $user_plan_data['arm_expire_plan'] ) && (int) $user_plan_data['arm_expire_plan'] < (int) $stripe_match['current_period_end'] ) {
+			$user_plan_data['arm_expire_plan'] = (int) $stripe_match['current_period_end'];
+		}
+	}
+
+	update_user_meta( $user_id, 'arm_user_plan_' . $plan_id, $user_plan_data );
+}
+
+/**
+ * Convert a system-created failed ARMember WooCommerce row to success when Stripe proves the subscription was paid.
+ *
+ * @param array $failed_row ARMember payment-log row.
+ * @return bool
+ */
+function arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( array $failed_row ) {
+	global $wpdb;
+
+	$user_id = isset( $failed_row['arm_user_id'] ) ? (int) $failed_row['arm_user_id'] : 0;
+	$plan_id = isset( $failed_row['arm_plan_id'] ) ? (int) $failed_row['arm_plan_id'] : 0;
+	$log_id  = isset( $failed_row['arm_log_id'] ) ? (int) $failed_row['arm_log_id'] : 0;
+	if ( $user_id < 1 || $plan_id < 1 || $log_id < 1 ) {
+		return false;
+	}
+
+	$user = get_userdata( $user_id );
+	if ( ! $user ) {
+		return false;
+	}
+
+	$stripe_match = arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, $failed_row );
+	if ( is_wp_error( $stripe_match ) || empty( $stripe_match ) ) {
+		arsenal_settings_wc_stripe_arm_cron_log(
+			'failed_log_repair_skip',
+			array(
+				'arm_log_id' => $log_id,
+				'user_id'    => $user_id,
+				'plan_id'    => $plan_id,
+				'reason'     => is_wp_error( $stripe_match ) ? $stripe_match->get_error_message() : 'no_matching_paid_stripe_subscription',
+			)
+		);
+		return false;
+	}
+
+	arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id, $stripe_match );
+
+	$extra_vars = arsenal_settings_arm_payment_log_extra_vars_array( isset( $failed_row['arm_extra_vars'] ) ? $failed_row['arm_extra_vars'] : '' );
+	$extra_vars['arsenal_source']             = 'stripe_direct_subscription_failed_log_repair';
+	$extra_vars['arsenal_synced_at']          = current_time( 'mysql' );
+	$extra_vars['stripe_customer_id']         = $stripe_match['customer_id'];
+	$extra_vars['stripe_subscription_id']     = $stripe_match['subscription_id'];
+	$extra_vars['stripe_subscription_status'] = $stripe_match['subscription_status'];
+	$extra_vars['stripe_invoice_id']          = $stripe_match['invoice_id'];
+	$extra_vars['stripe_invoice_status']      = $stripe_match['invoice_status'];
+	$extra_vars['stripe_payment_intent_id']   = $stripe_match['payment_intent_id'];
+	$extra_vars['stripe_charge_id']           = $stripe_match['latest_charge_id'];
+
+	$transaction_id = $stripe_match['latest_charge_id'] !== ''
+		? $stripe_match['latest_charge_id']
+		: ( $stripe_match['payment_intent_id'] !== '' ? $stripe_match['payment_intent_id'] : $stripe_match['invoice_id'] );
+
+	$table = arsenal_settings_get_armember_payment_log_table();
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember global/prefix helper.
+	$updated = $wpdb->update(
+		$table,
+		array(
+			'arm_transaction_id'     => $transaction_id,
+			'arm_transaction_status' => 'success',
+			'arm_token'              => $stripe_match['subscription_id'],
+			'arm_payment_mode'       => 'manual_subscription',
+			'arm_extra_vars'         => maybe_serialize( $extra_vars ),
+		),
+		array( 'arm_log_id' => $log_id ),
+		array( '%s', '%s', '%s', '%s', '%s' ),
+		array( '%d' )
+	);
+
+	arsenal_settings_wc_stripe_arm_cron_log(
+		false === $updated ? 'failed_log_repair_error' : 'failed_log_repaired',
+		array(
+			'arm_log_id'      => $log_id,
+			'user_id'         => $user_id,
+			'plan_id'         => $plan_id,
+			'transaction_id'  => $transaction_id,
+			'stripe_sub_id'   => $stripe_match['subscription_id'],
+			'rows_affected'   => false === $updated ? 0 : (int) $updated,
+			'db_error'        => false === $updated ? $wpdb->last_error : '',
+		)
+	);
+
+	return false !== $updated;
+}
+
+/**
+ * Keep ARMember plan state active after a confirmed WooCommerce Stripe renewal.
+ *
+ * Payment history alone is not enough for ARMember access checks. Suspended plans are tracked in user meta, and recurring
+ * plans rely on `arm_next_due_payment` / grace flags. This makes the payment-log backfill idempotently restore that state.
+ *
+ * @param int      $user_id WordPress user id.
+ * @param int      $plan_id ARMember plan id.
+ * @param WC_Order $order   WooCommerce order.
+ * @return bool True when the renewal had already been processed before this call.
+ */
+function arsenal_settings_restore_arm_plan_after_wc_stripe_payment( $user_id, $plan_id, $order ) {
+	global $arm_subscription_plans, $arm_members_class;
+
+	$user_id  = (int) $user_id;
+	$plan_id  = (int) $plan_id;
+	$order_id = is_object( $order ) && method_exists( $order, 'get_id' ) ? (int) $order->get_id() : 0;
+	if ( $user_id < 1 || $plan_id < 1 || $order_id < 1 ) {
+		return false;
+	}
+
+	$suspended_plan_ids = get_user_meta( $user_id, 'arm_user_suspended_plan_ids', true );
+	$suspended_plan_ids = is_array( $suspended_plan_ids ) ? array_map( 'intval', $suspended_plan_ids ) : array();
+	if ( in_array( $plan_id, $suspended_plan_ids, true ) ) {
+		$suspended_plan_ids = array_values( array_diff( $suspended_plan_ids, array( $plan_id ) ) );
+		update_user_meta( $user_id, 'arm_user_suspended_plan_ids', $suspended_plan_ids );
+	}
+
+	$restore_key = 'arsenal_arm_plan_restored_' . $plan_id;
+	$already_restored = '' !== (string) arsenal_settings_wc_order_meta( $order, $restore_key );
+
+	$default_plan_data = is_object( $arm_subscription_plans ) && method_exists( $arm_subscription_plans, 'arm_default_plan_array' )
+		? $arm_subscription_plans->arm_default_plan_array()
+		: array();
+	$user_plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	$user_plan_data = is_array( $user_plan_data ) ? $user_plan_data : array();
+	if ( ! empty( $default_plan_data ) ) {
+		$user_plan_data = shortcode_atts( $default_plan_data, $user_plan_data );
+	}
+
+	if ( empty( $user_plan_data ) ) {
+		return $already_restored;
+	}
+
+	$active_plan_ids = get_user_meta( $user_id, 'arm_user_plan_ids', true );
+	$active_plan_ids = is_array( $active_plan_ids ) ? array_map( 'intval', $active_plan_ids ) : array();
+	if ( ! in_array( $plan_id, $active_plan_ids, true ) ) {
+		$active_plan_ids[] = $plan_id;
+		update_user_meta( $user_id, 'arm_user_plan_ids', array_values( array_unique( $active_plan_ids ) ) );
+	}
+
+	$user_plan_data['arm_user_gateway']       = 'woocommerce';
+	$user_plan_data['arm_cencelled_plan']     = '';
+	$user_plan_data['arm_is_user_in_grace']   = '0';
+	$user_plan_data['arm_grace_period_end']   = '';
+	$user_plan_data['arm_grace_period_action'] = '';
+
+	$plan = class_exists( 'ARM_Plan' ) ? new ARM_Plan( $plan_id ) : null;
+	if ( is_object( $plan ) && method_exists( $plan, 'is_recurring' ) && $plan->is_recurring() ) {
+		$user_plan_data['arm_payment_mode'] = 'manual_subscription';
+
+		if ( ! $already_restored ) {
+			$user_plan_data['arm_completed_recurring'] = isset( $user_plan_data['arm_completed_recurring'] )
+				? ( (int) $user_plan_data['arm_completed_recurring'] + 1 )
+				: 1;
+		}
+
+		$next_due = 0;
+		$subscription_id = (int) arsenal_settings_wc_order_meta( $order, 'wps_sfw_subscription' );
+		if ( $subscription_id > 0 && function_exists( 'wps_sfw_get_meta_data' ) ) {
+			$next_due = arsenal_settings_parse_arm_timestamp( wps_sfw_get_meta_data( $subscription_id, 'wps_next_payment_date', true ) );
+		}
+
+		if ( $next_due <= current_time( 'timestamp' ) && is_object( $arm_members_class ) && method_exists( $arm_members_class, 'arm_get_next_due_date' ) ) {
+			$payment_cycle = isset( $user_plan_data['arm_payment_cycle'] ) ? $user_plan_data['arm_payment_cycle'] : 0;
+			$next_due      = (int) $arm_members_class->arm_get_next_due_date( $user_id, $plan_id, false, $payment_cycle );
+		}
+
+		if ( $next_due > current_time( 'timestamp' ) ) {
+			$user_plan_data['arm_next_due_payment'] = $next_due;
+			if ( ! empty( $user_plan_data['arm_expire_plan'] ) && (int) $user_plan_data['arm_expire_plan'] < $next_due ) {
+				$user_plan_data['arm_expire_plan'] = $next_due;
+			}
+		}
+	}
+
+	update_user_meta( $user_id, 'arm_user_plan_' . $plan_id, $user_plan_data );
+
+	if ( ! $already_restored && is_object( $order ) && method_exists( $order, 'update_meta_data' ) ) {
+		$order->update_meta_data( $restore_key, current_time( 'mysql' ) );
+		$order->save_meta_data();
+	}
+
+	return $already_restored;
+}
+
+/**
+ * Insert missing ARMember payment-log rows for paid WooCommerce Stripe orders.
+ *
+ * ARMember's WooCommerce integration only listens to completed orders. Stripe renewals from Subscriptions For WooCommerce
+ * can settle into the custom wps_renewal status, which means the ARMember `woocommerce` gateway row is never created.
+ *
+ * @param int $order_id WooCommerce order id.
+ * @param bool $cron_log Whether to write detailed rows to the cron log.
+ * @return int Number of rows inserted.
+ */
+function arsenal_settings_sync_wc_stripe_order_to_arm_payment_log( $order_id, $cron_log = false ) {
+	global $wpdb, $arm_payment_gateways;
+
+	$order_id = (int) $order_id;
+	if ( $order_id < 1 || ! function_exists( 'wc_get_order' ) ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log( 'order_skip', array( 'reason' => 'invalid_order_or_woocommerce_missing', 'order_id' => $order_id ) );
+		}
+		return 0;
+	}
+
+	$order = wc_get_order( $order_id );
+	if ( ! $order || ! is_object( $order ) ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log( 'order_skip', array( 'reason' => 'order_not_found', 'order_id' => $order_id ) );
+		}
+		return 0;
+	}
+
+	$payment_method = method_exists( $order, 'get_payment_method' ) ? (string) $order->get_payment_method() : '';
+	if ( 'stripe' !== $payment_method ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log( 'order_skip', array( 'reason' => 'not_stripe', 'order_id' => $order_id, 'payment_method' => $payment_method ) );
+		}
+		return 0;
+	}
+
+	$status = method_exists( $order, 'get_status' ) ? (string) $order->get_status() : '';
+	if ( ! arsenal_settings_wc_stripe_order_is_paid_or_verified( $order ) ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log( 'order_skip', array( 'reason' => 'not_paid_or_stripe_not_verified', 'order_id' => $order_id, 'status' => $status ) );
+		}
+		return 0;
+	}
+
+	$plan_ids = arsenal_settings_get_arm_plan_ids_for_wc_order( $order );
+	if ( empty( $plan_ids ) ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log( 'order_skip', array( 'reason' => 'no_armember_plan_mapping', 'order_id' => $order_id, 'status' => $status ) );
+		}
+		return 0;
+	}
+
+	$user_id = method_exists( $order, 'get_customer_id' ) ? (int) $order->get_customer_id() : 0;
+	if ( $user_id < 1 && method_exists( $order, 'get_billing_email' ) ) {
+		$user = get_user_by( 'email', (string) $order->get_billing_email() );
+		if ( $user && ! empty( $user->ID ) ) {
+			$user_id = (int) $user->ID;
+		}
+	}
+	if ( $user_id < 1 ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log( 'order_skip', array( 'reason' => 'user_not_found', 'order_id' => $order_id, 'plan_ids' => $plan_ids ) );
+		}
+		return 0;
+	}
+
+	$user_info = get_userdata( $user_id );
+	if ( ! $user_info ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log( 'order_skip', array( 'reason' => 'user_data_not_found', 'order_id' => $order_id, 'user_id' => $user_id ) );
+		}
+		return 0;
+	}
+
+	$table          = arsenal_settings_get_armember_payment_log_table();
+	$payment_date   = arsenal_settings_get_wc_order_payment_date( $order );
+	$currency       = method_exists( $order, 'get_currency' ) ? (string) $order->get_currency() : '';
+	$stripe_charge  = method_exists( $order, 'get_transaction_id' ) ? (string) $order->get_transaction_id() : '';
+	$stripe_intent  = (string) arsenal_settings_wc_order_meta( $order, '_stripe_intent_id' );
+	$stripe_customer = (string) arsenal_settings_wc_order_meta( $order, '_stripe_customer_id' );
+	$inserted       = 0;
+
+	foreach ( $plan_ids as $plan_id ) {
+		arsenal_settings_restore_arm_plan_after_wc_stripe_payment( $user_id, $plan_id, $order );
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember global/prefix helper.
+		$existing_log_id = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT `arm_log_id` FROM `{$table}` WHERE `arm_payment_gateway` = %s AND `arm_transaction_id` = %s AND `arm_plan_id` = %d ORDER BY `arm_log_id` DESC LIMIT 1",
+				'woocommerce',
+				(string) $order_id,
+				(int) $plan_id
+			)
+		);
+		if ( $existing_log_id > 0 ) {
+			if ( $cron_log ) {
+				arsenal_settings_wc_stripe_arm_cron_log(
+					'payment_log_exists',
+					array(
+						'order_id'   => $order_id,
+						'plan_id'    => (int) $plan_id,
+						'arm_log_id' => $existing_log_id,
+					)
+				);
+			}
+			continue;
+		}
+
+		$plan_type  = arsenal_settings_get_arm_plan_payment_type( $plan_id );
+		$extra_vars = array(
+			'arsenal_source'             => 'woocommerce_stripe_payment_log_backfill',
+			'arsenal_synced_at'          => current_time( 'mysql' ),
+			'woocommerce_order_id'       => $order_id,
+			'woocommerce_order_status'   => $status,
+			'woocommerce_payment_method' => $payment_method,
+		);
+		if ( '' !== $stripe_charge ) {
+			$extra_vars['stripe_charge_id'] = $stripe_charge;
+		}
+		if ( '' !== $stripe_intent ) {
+			$extra_vars['stripe_payment_intent_id'] = $stripe_intent;
+		}
+		if ( '' !== $stripe_customer ) {
+			$extra_vars['stripe_customer_id'] = $stripe_customer;
+		}
+
+		$payment_data = array(
+			'arm_user_id'                  => $user_id,
+			'arm_first_name'               => isset( $user_info->first_name ) ? (string) $user_info->first_name : '',
+			'arm_last_name'                => isset( $user_info->last_name ) ? (string) $user_info->last_name : '',
+			'arm_plan_id'                  => (int) $plan_id,
+			'arm_payment_gateway'          => 'woocommerce',
+			'arm_payment_type'             => $plan_type,
+			'arm_token'                    => $stripe_customer,
+			'arm_payer_email'              => isset( $user_info->user_email ) ? (string) $user_info->user_email : '',
+			'arm_receiver_email'           => '',
+			'arm_transaction_id'           => (string) $order_id,
+			'arm_transaction_payment_type' => $plan_type,
+			'arm_transaction_status'       => 'success',
+			'arm_payment_mode'             => 'recurring' === $plan_type ? 'manual_subscription' : '',
+			'arm_payment_date'             => $payment_date,
+			'arm_amount'                   => arsenal_settings_get_wc_order_plan_amount( $order, $plan_id ),
+			'arm_currency'                 => $currency,
+			'arm_extra_vars'               => maybe_serialize( $extra_vars ),
+			'arm_created_date'             => $payment_date,
+		);
+
+		$payment_log_id = false;
+		if ( is_object( $arm_payment_gateways ) && method_exists( $arm_payment_gateways, 'arm_save_payment_log' ) ) {
+			$payment_log_id = $arm_payment_gateways->arm_save_payment_log( $payment_data );
+		}
+
+		if ( $payment_log_id ) {
+			$inserted++;
+			if ( $cron_log ) {
+				arsenal_settings_wc_stripe_arm_cron_log(
+					'payment_log_inserted',
+					array(
+						'order_id'       => $order_id,
+						'plan_id'        => (int) $plan_id,
+						'payment_log_id' => (int) $payment_log_id,
+					)
+				);
+			}
+			arsenal_settings_api_process_log(
+				'wc_stripe_arm_payment_log_inserted',
+				array(
+					'order_id'       => $order_id,
+					'plan_id'        => (int) $plan_id,
+					'payment_log_id' => (int) $payment_log_id,
+				)
+			);
+		} else {
+			if ( $cron_log ) {
+				arsenal_settings_wc_stripe_arm_cron_log(
+					'payment_log_insert_error',
+					array(
+						'order_id' => $order_id,
+						'plan_id'  => (int) $plan_id,
+						'db_error' => $wpdb->last_error,
+					)
+				);
+			}
+			arsenal_settings_api_process_log(
+				'wc_stripe_arm_payment_log_insert_error',
+				array(
+					'order_id' => $order_id,
+					'plan_id'  => (int) $plan_id,
+					'db_error' => $wpdb->last_error,
+				)
+			);
+		}
+	}
+
+	return $inserted;
+}
+
+/**
+ * Sync a WooCommerce order after status changes into a paid state.
+ *
+ * @param int       $order_id WooCommerce order id.
+ * @param string    $from     Previous status.
+ * @param string    $to       New status.
+ * @param WC_Order  $order    WooCommerce order.
+ */
+function arsenal_settings_sync_wc_stripe_order_status_to_arm_payment_log( $order_id, $from, $to, $order = null ) {
+	unset( $from, $order );
+	if ( in_array( (string) $to, array( 'completed', 'processing', 'wps_renewal' ), true ) ) {
+		arsenal_settings_sync_wc_stripe_order_to_arm_payment_log( (int) $order_id );
+	}
+}
+add_action( 'woocommerce_order_status_changed', 'arsenal_settings_sync_wc_stripe_order_status_to_arm_payment_log', 20, 4 );
+add_action( 'woocommerce_payment_complete', 'arsenal_settings_sync_wc_stripe_order_to_arm_payment_log', 20, 1 );
+
+/**
+ * Schedule the missed WooCommerce Stripe renewal backfill cron.
+ */
+function arsenal_settings_schedule_wc_stripe_arm_payment_log_cron() {
+	if ( ! wp_next_scheduled( 'arsenal_settings_sync_wc_stripe_arm_payment_logs' ) ) {
+		wp_schedule_event( time() + HOUR_IN_SECONDS, 'hourly', 'arsenal_settings_sync_wc_stripe_arm_payment_logs' );
+	}
+}
+add_action( 'init', 'arsenal_settings_schedule_wc_stripe_arm_payment_log_cron' );
+
+/**
+ * Cron: backfill recent paid WooCommerce Stripe renewal orders that missed ARMember's completed-order hook.
+ */
+function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
+	global $wpdb;
+
+	if ( ! function_exists( 'wc_get_orders' ) ) {
+		arsenal_settings_wc_stripe_arm_cron_log(
+			'cron_skip',
+			array(
+				'reason' => 'woocommerce_not_loaded',
+				'hook'   => 'arsenal_settings_sync_wc_stripe_arm_payment_logs',
+			)
+		);
+		return;
+	}
+
+	$started = microtime( true );
+	arsenal_settings_wc_stripe_arm_cron_log(
+		'cron_start',
+		array(
+			'hook'   => 'arsenal_settings_sync_wc_stripe_arm_payment_logs',
+			'limit'  => 50,
+			'status' => array( 'completed', 'processing', 'wps_renewal', 'pending', 'on-hold' ),
+		)
+	);
+
+	$orders = wc_get_orders(
+		array(
+			'limit'          => 50,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+			'status'         => array( 'completed', 'processing', 'wps_renewal', 'pending', 'on-hold' ),
+			'payment_method' => 'stripe',
+			'meta_query'     => array(
+				array(
+					'key'   => 'wps_sfw_renewal_order',
+					'value' => 'yes',
+				),
+			),
+			'return'         => 'ids',
+		)
+	);
+
+	if ( ! is_array( $orders ) ) {
+		arsenal_settings_wc_stripe_arm_cron_log(
+			'cron_error',
+			array(
+				'reason' => 'wc_get_orders_invalid_result',
+				'type'   => gettype( $orders ),
+			)
+		);
+		return;
+	}
+
+	$total_inserted = 0;
+	foreach ( $orders as $order_id ) {
+		$inserted = arsenal_settings_sync_wc_stripe_order_to_arm_payment_log( (int) $order_id, true );
+		$total_inserted += (int) $inserted;
+		arsenal_settings_wc_stripe_arm_cron_log(
+			'cron_order_checked',
+			array(
+				'order_id' => (int) $order_id,
+				'inserted' => (int) $inserted,
+			)
+		);
+	}
+
+	$repaired_failed_logs = 0;
+	$table                = arsenal_settings_get_armember_payment_log_table();
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember global/prefix helper.
+	$failed_rows = $wpdb->get_results(
+		$wpdb->prepare(
+			"SELECT * FROM `{$table}` WHERE `arm_payment_gateway` = %s AND `arm_transaction_status` = %s AND `arm_created_date` >= %s ORDER BY `arm_log_id` DESC LIMIT 50",
+			'woocommerce',
+			'failed',
+			gmdate( 'Y-m-d H:i:s', strtotime( '-14 days' ) )
+		),
+		ARRAY_A
+	);
+	if ( is_array( $failed_rows ) ) {
+		foreach ( $failed_rows as $failed_row ) {
+			if ( arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( $failed_row ) ) {
+				$repaired_failed_logs++;
+			}
+		}
+	}
+
+	arsenal_settings_wc_stripe_arm_cron_log(
+		'cron_complete',
+		array(
+			'orders_checked'       => count( $orders ),
+			'total_inserted'       => $total_inserted,
+			'failed_logs_checked'  => is_array( $failed_rows ) ? count( $failed_rows ) : 0,
+			'failed_logs_repaired' => $repaired_failed_logs,
+			'duration_ms'          => (int) round( 1000 * ( microtime( true ) - $started ) ),
+		)
+	);
+}
+add_action( 'arsenal_settings_sync_wc_stripe_arm_payment_logs', 'arsenal_settings_cron_sync_wc_stripe_arm_payment_logs' );
+
+/**
  * REST callback: create-recurring-subscription-by-armember-plan-deferred — same plan resolution as by-armember-plan, but no initial charge on this request.
  *
  * Accepts **GET** (query string), **POST** (form-encoded or multipart), or **POST** with a **JSON object** or **JSON array**
@@ -4396,7 +5403,7 @@ function arsenal_settings_handle_download_api_log() {
 	check_admin_referer( arsenal_settings_api_log_admin_nonce_action() );
 
 	$file = isset( $_GET['log_file'] ) ? sanitize_file_name( wp_unslash( (string) $_GET['log_file'] ) ) : '';
-	if ( ! preg_match( '/^api-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$/', $file ) ) {
+	if ( ! preg_match( '/' . arsenal_settings_allowed_log_file_pattern() . '/', $file ) ) {
 		wp_die( esc_html__( 'Invalid log file name.', 'arsenal-settings' ), '', array( 'response' => 400 ) );
 	}
 
@@ -4432,7 +5439,7 @@ function arsenal_settings_handle_delete_api_log() {
 	check_admin_referer( arsenal_settings_api_log_admin_nonce_action() );
 
 	$file = isset( $_POST['log_file'] ) ? sanitize_file_name( wp_unslash( (string) $_POST['log_file'] ) ) : '';
-	if ( ! preg_match( '/^api-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$/', $file ) ) {
+	if ( ! preg_match( '/' . arsenal_settings_allowed_log_file_pattern() . '/', $file ) ) {
 		wp_die( esc_html__( 'Invalid log file name.', 'arsenal-settings' ), '', array( 'response' => 400 ) );
 	}
 
@@ -4495,9 +5502,13 @@ function arsenal_settings_render_api_logs_page() {
 	$dir     = is_wp_error( $dir_res ) ? '' : $dir_res;
 	$files   = array();
 	if ( $dir !== '' && is_dir( $dir ) ) {
-		$glob = glob( $dir . 'api-*.log' );
-		if ( is_array( $glob ) ) {
-			$files = $glob;
+		$api_glob  = glob( $dir . 'api-*.log' );
+		$cron_glob = glob( $dir . 'wc-stripe-arm-cron-*.log' );
+		$files     = array_merge(
+			is_array( $api_glob ) ? $api_glob : array(),
+			is_array( $cron_glob ) ? $cron_glob : array()
+		);
+		if ( array() !== $files ) {
 			usort(
 				$files,
 				static function ( $a, $b ) {
@@ -4528,7 +5539,7 @@ function arsenal_settings_render_api_logs_page() {
 			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-stripe' ) ); ?>"><?php esc_html_e( 'Stripe', 'arsenal-settings' ); ?></a>
 		</p>
 		<p class="description">
-			<?php esc_html_e( 'NDJSON logs for Arsenal REST routes (arsenal-settings/v1). Each line is one request: params, internal process steps, response status and body (sensitive fields redacted). Logs are stored under uploads in a directory not meant for public access.', 'arsenal-settings' ); ?>
+			<?php esc_html_e( 'NDJSON logs for Arsenal REST routes (api-YYYY-MM-DD.log) and the WooCommerce Stripe ARMember sync cron (wc-stripe-arm-cron-YYYY-MM-DD.log). Sensitive fields are redacted. Logs are stored under uploads in a directory not meant for public access.', 'arsenal-settings' ); ?>
 		</p>
 		<?php if ( is_wp_error( $dir_res ) ) : ?>
 			<div class="notice notice-error"><p><?php echo esc_html( $dir_res->get_error_message() ); ?></p></div>
@@ -4548,7 +5559,7 @@ function arsenal_settings_render_api_logs_page() {
 					<?php foreach ( $files as $path ) : ?>
 						<?php
 						$fname = basename( $path );
-						if ( ! preg_match( '/^api-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$/', $fname ) ) {
+						if ( ! preg_match( '/' . arsenal_settings_allowed_log_file_pattern() . '/', $fname ) ) {
 							continue;
 						}
 						$dl = wp_nonce_url(
