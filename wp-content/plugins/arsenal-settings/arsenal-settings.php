@@ -4545,11 +4545,19 @@ add_action( 'woocommerce_order_status_changed', 'arsenal_settings_sync_wc_stripe
 add_action( 'woocommerce_payment_complete', 'arsenal_settings_sync_wc_stripe_order_to_arm_payment_log', 20, 1 );
 
 /**
- * Schedule the missed WooCommerce Stripe renewal backfill cron.
+ * Schedule the missed WooCommerce Stripe renewal backfill cron every 12 hours.
  */
 function arsenal_settings_schedule_wc_stripe_arm_payment_log_cron() {
-	if ( ! wp_next_scheduled( 'arsenal_settings_sync_wc_stripe_arm_payment_logs' ) ) {
-		wp_schedule_event( time() + HOUR_IN_SECONDS, 'hourly', 'arsenal_settings_sync_wc_stripe_arm_payment_logs' );
+	$hook     = 'arsenal_settings_sync_wc_stripe_arm_payment_logs';
+	$schedule = wp_get_schedule( $hook );
+
+	if ( $schedule && 'twicedaily' !== $schedule ) {
+		wp_clear_scheduled_hook( $hook );
+		$schedule = false;
+	}
+
+	if ( ! $schedule && ! wp_next_scheduled( $hook ) ) {
+		wp_schedule_event( time() + HOUR_IN_SECONDS, 'twicedaily', $hook );
 	}
 }
 add_action( 'init', 'arsenal_settings_schedule_wc_stripe_arm_payment_log_cron' );
