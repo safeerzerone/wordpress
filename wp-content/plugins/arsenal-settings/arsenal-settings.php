@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Arsenal settings
  * Description: Provides REST endpoints for Arsenal-related configuration and checks.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Arsenal
  * Text Domain: arsenal-settings
  *
@@ -13,8 +13,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ARSENAL_SETTINGS_VERSION', '1.0.0' );
+define( 'ARSENAL_SETTINGS_VERSION', '1.0.1' );
 define( 'ARSENAL_SETTINGS_REST_NAMESPACE', 'arsenal-settings/v1' );
+
+require_once __DIR__ . '/arsenal-settings-rest-ensure-recurring-by-active-membership.php';
 
 /** User meta key: plaintext API key shown once after generation (must match saved option). */
 function arsenal_settings_pending_api_key_usermeta_key() {
@@ -1433,9 +1435,100 @@ function arsenal_settings_stripe_create_subscription_inline_price( $customer_id,
 }
 
 /**
+ * REST route definition for “ensure recurring by active ARMember plan” (shared by URL aliases).
+ *
+ * @return array<string,mixed>
+ */
+function arsenal_settings_get_ensure_recurring_rest_route_config() {
+	return array(
+		'methods'             => array( 'GET', 'POST', 'HEAD', 'OPTIONS' ),
+		'callback'            => 'arsenal_settings_rest_ensure_recurring_subscription_by_active_armember_plan',
+		'permission_callback' => 'arsenal_settings_rest_permission_callback',
+		'args'                => array(
+			'customer_email'   => array(
+				'required'          => true,
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_email',
+			),
+			'armember_plan_id' => array(
+				'required' => true,
+				'type'     => 'integer',
+			),
+			'payment_cycle'    => array(
+				'required' => false,
+				'type'     => 'integer',
+				'default'  => 0,
+			),
+			'quantity'         => array(
+				'required' => false,
+				'type'     => 'integer',
+				'default'  => 1,
+			),
+			'defer_first_billing_period' => array(
+				'required' => false,
+				'type'     => 'boolean',
+				'default'  => true,
+			),
+			'default_payment_method' => array(
+				'required'          => false,
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_text_field',
+			),
+			'payment_behavior'       => array(
+				'required'          => false,
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_text_field',
+			),
+			'billing_cycle_anchor'   => array(
+				'required' => false,
+				'type'     => 'integer',
+			),
+			'trial_period_days'      => array(
+				'required' => false,
+				'type'     => 'integer',
+			),
+		),
+	);
+}
+
+/**
+ * REST: small manifest so you can confirm the running site loaded this plugin build (diagnostics).
+ *
+ * @return WP_REST_Response
+ */
+function arsenal_settings_rest_plugin_route_manifest() {
+	$ns = ARSENAL_SETTINGS_REST_NAMESPACE;
+	return new WP_REST_Response(
+		array(
+			'status'  => true,
+			'code'    => 'ok',
+			'plugin'  => 'arsenal-settings',
+			'version' => defined( 'ARSENAL_SETTINGS_VERSION' ) ? ARSENAL_SETTINGS_VERSION : '',
+			'ensure_recurring_relative_paths' => array(
+				'/' . $ns . '/ensure-recurring-subscription-by-active-armember-plan',
+				'/' . $ns . '/ensure-recurring-subscription-by-active-armmember-plan',
+				'/' . $ns . '/ensure-armember-recurring-active-plan',
+			),
+			'canonical_url' => get_rest_url( null, '/' . $ns . '/ensure-recurring-subscription-by-active-armember-plan' ),
+		),
+		200
+	);
+}
+
+/**
  * Register REST API routes.
  */
 function arsenal_settings_register_rest_routes() {
+	register_rest_route(
+		ARSENAL_SETTINGS_REST_NAMESPACE,
+		'/plugin-route-manifest',
+		array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => 'arsenal_settings_rest_plugin_route_manifest',
+			'permission_callback' => 'arsenal_settings_rest_permission_callback',
+		)
+	);
+
 	register_rest_route(
 		ARSENAL_SETTINGS_REST_NAMESPACE,
 		'/check-user-subscription',
@@ -1825,6 +1918,20 @@ function arsenal_settings_register_rest_routes() {
 			),
 		)
 	);
+
+	foreach (
+		array(
+			'/ensure-recurring-subscription-by-active-armember-plan',
+			'/ensure-recurring-subscription-by-active-armmember-plan',
+			'/ensure-armember-recurring-active-plan',
+		) as $ensure_path
+	) {
+		register_rest_route(
+			ARSENAL_SETTINGS_REST_NAMESPACE,
+			$ensure_path,
+			arsenal_settings_get_ensure_recurring_rest_route_config()
+		);
+	}
 
 	register_rest_route(
 		ARSENAL_SETTINGS_REST_NAMESPACE,
