@@ -3950,6 +3950,73 @@ function arsenal_settings_get_arm_plan_payment_type( $plan_id ) {
 }
 
 /**
+ * Format a Unix timestamp as an ARMember payment-log datetime in WordPress local time.
+ *
+ * ARMember stores `arm_created_date` / `arm_payment_date` as local mysql strings (see `current_time( 'mysql' )`)
+ * and displays them with `date_i18n( ..., strtotime( ... ) )`.
+ *
+ * @param int $timestamp Unix timestamp (UTC).
+ * @return string Empty when invalid.
+ */
+function arsenal_settings_unix_to_arm_payment_datetime( $timestamp ) {
+	$timestamp = (int) $timestamp;
+	if ( $timestamp < 1 ) {
+		return '';
+	}
+
+	return wp_date( 'Y-m-d H:i:s', $timestamp );
+}
+
+/**
+ * Extract the paid-at Unix timestamp from a Stripe invoice / PaymentIntent payload.
+ *
+ * @param array      $invoice         Stripe invoice.
+ * @param array|null $payment_intent  Stripe PaymentIntent (optional).
+ * @return int
+ */
+function arsenal_settings_stripe_extract_paid_at_timestamp( array $invoice, $payment_intent = null ) {
+	if ( ! empty( $invoice['status_transitions']['paid_at'] ) ) {
+		return (int) $invoice['status_transitions']['paid_at'];
+	}
+
+	if ( is_array( $payment_intent ) && ! empty( $payment_intent['created'] ) ) {
+		return (int) $payment_intent['created'];
+	}
+
+	if ( ! empty( $invoice['created'] ) && isset( $invoice['status'] ) && 'paid' === (string) $invoice['status'] ) {
+		return (int) $invoice['created'];
+	}
+
+	return 0;
+}
+
+/**
+ * Resolve payment datetime for ARMember logs from Stripe match data and/or a WooCommerce order.
+ *
+ * @param array $stripe_match  Stripe subscription/invoice match.
+ * @param int   $wc_order_id   WooCommerce order id (optional).
+ * @return string Local mysql datetime or empty string.
+ */
+function arsenal_settings_resolve_arm_payment_datetime_from_stripe_match( array $stripe_match, $wc_order_id = 0 ) {
+	if ( ! empty( $stripe_match['paid_at'] ) ) {
+		$from_stripe = arsenal_settings_unix_to_arm_payment_datetime( (int) $stripe_match['paid_at'] );
+		if ( '' !== $from_stripe ) {
+			return $from_stripe;
+		}
+	}
+
+	$wc_order_id = (int) $wc_order_id;
+	if ( $wc_order_id > 0 && function_exists( 'wc_get_order' ) ) {
+		$order = wc_get_order( $wc_order_id );
+		if ( $order && is_object( $order ) ) {
+			return arsenal_settings_get_wc_order_payment_date( $order );
+		}
+	}
+
+	return '';
+}
+
+/**
  * Return a date string suitable for ARMember payment-log fields.
  *
  * @param WC_Order $order WooCommerce order.
@@ -3964,8 +4031,8 @@ function arsenal_settings_get_wc_order_payment_date( $order ) {
 		$date = $order->get_date_created();
 	}
 
-	if ( is_object( $date ) && method_exists( $date, 'date' ) ) {
-		return $date->date( 'Y-m-d H:i:s' );
+	if ( is_object( $date ) && method_exists( $date, 'getTimestamp' ) ) {
+		return arsenal_settings_unix_to_arm_payment_datetime( $date->getTimestamp() );
 	}
 
 	return current_time( 'mysql' );
@@ -4458,6 +4525,7 @@ function arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, ar
 		$payment_intent = isset( $invoice['payment_intent'] ) ? $invoice['payment_intent'] : null;
 		$payment_intent_id = is_array( $payment_intent ) && ! empty( $payment_intent['id'] ) ? (string) $payment_intent['id'] : '';
 		$latest_charge_id  = is_array( $payment_intent ) && ! empty( $payment_intent['latest_charge'] ) ? (string) $payment_intent['latest_charge'] : '';
+		$paid_at           = arsenal_settings_stripe_extract_paid_at_timestamp( $invoice, is_array( $payment_intent ) ? $payment_intent : null );
 
 		return array(
 			'customer_id'        => $customer_id,
@@ -4470,6 +4538,7 @@ function arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, ar
 			'currency'           => isset( $invoice['currency'] ) ? (string) $invoice['currency'] : '',
 			'payment_intent_id'  => $payment_intent_id,
 			'latest_charge_id'   => $latest_charge_id,
+			'paid_at'            => $paid_at,
 		);
 	}
 
@@ -4584,6 +4653,21 @@ function arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( array $
 	arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id, $stripe_match );
 
 	if ( $duplicate_success_id > 0 && $duplicate_success_id !== $log_id ) {
+		$payment_datetime = arsenal_settings_resolve_arm_payment_datetime_from_stripe_match( $stripe_match, $wc_order_id );
+		if ( '' !== $payment_datetime ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+			$wpdb->update(
+				$table,
+				array(
+					'arm_created_date' => $payment_datetime,
+					'arm_payment_date' => $payment_datetime,
+				),
+				array( 'arm_log_id' => $duplicate_success_id ),
+				array( '%s', '%s' ),
+				array( '%d' )
+			);
+		}
+
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
 		$deleted = $wpdb->delete( $table, array( 'arm_log_id' => $log_id ), array( '%d' ) );
 		$ok      = false !== $deleted && (int) $deleted > 0;
@@ -4597,6 +4681,7 @@ function arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( array $
 				'rows_deleted'         => false === $deleted ? -1 : (int) $deleted,
 				'db_error'             => $wpdb->last_error,
 				'woocommerce_order_id' => $wc_order_id,
+				'payment_datetime'     => $payment_datetime,
 			)
 		);
 		return $ok;
@@ -4617,18 +4702,29 @@ function arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( array $
 		? $stripe_match['latest_charge_id']
 		: ( $stripe_match['payment_intent_id'] !== '' ? $stripe_match['payment_intent_id'] : $stripe_match['invoice_id'] );
 
+	$payment_datetime = arsenal_settings_resolve_arm_payment_datetime_from_stripe_match( $stripe_match, $wc_order_id );
+
+	$update_row = array(
+		'arm_transaction_id'     => $transaction_id,
+		'arm_transaction_status' => 'success',
+		'arm_token'              => $stripe_match['subscription_id'],
+		'arm_payment_mode'       => 'manual_subscription',
+		'arm_extra_vars'         => maybe_serialize( $extra_vars ),
+	);
+	$update_formats = array( '%s', '%s', '%s', '%s', '%s' );
+	if ( '' !== $payment_datetime ) {
+		$update_row['arm_created_date'] = $payment_datetime;
+		$update_row['arm_payment_date'] = $payment_datetime;
+		$update_formats[]               = '%s';
+		$update_formats[]               = '%s';
+	}
+
 	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember global/prefix helper.
 	$updated = $wpdb->update(
 		$table,
-		array(
-			'arm_transaction_id'     => $transaction_id,
-			'arm_transaction_status' => 'success',
-			'arm_token'              => $stripe_match['subscription_id'],
-			'arm_payment_mode'       => 'manual_subscription',
-			'arm_extra_vars'         => maybe_serialize( $extra_vars ),
-		),
+		$update_row,
 		array( 'arm_log_id' => $log_id ),
-		array( '%s', '%s', '%s', '%s', '%s' ),
+		$update_formats,
 		array( '%d' )
 	);
 
@@ -4646,6 +4742,117 @@ function arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( array $
 	);
 
 	return false !== $updated;
+}
+
+/**
+ * Correct payment dates on successful WooCommerce ARMember rows that were repaired from a system "failed" log.
+ *
+ * Older repairs flipped status to success but left `arm_created_date` at the cron/failed-log time instead of Stripe paid time.
+ *
+ * @param int $days Look-back window in days.
+ * @return int Number of rows updated.
+ */
+function arsenal_settings_backfill_repaired_arm_payment_log_dates( $days = 14 ) {
+	global $wpdb;
+
+	$days = max( 1, (int) $days );
+	$table = arsenal_settings_get_armember_payment_log_table();
+	if ( '' === $table ) {
+		return 0;
+	}
+
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+	$rows = $wpdb->get_results(
+		$wpdb->prepare(
+			"SELECT * FROM `{$table}` WHERE `arm_payment_gateway` = %s AND `arm_transaction_status` = %s AND `arm_created_date` >= %s ORDER BY `arm_log_id` DESC LIMIT 100",
+			'woocommerce',
+			'success',
+			gmdate( 'Y-m-d H:i:s', strtotime( '-' . $days . ' days' ) )
+		),
+		ARRAY_A
+	);
+
+	if ( ! is_array( $rows ) || empty( $rows ) ) {
+		return 0;
+	}
+
+	$updated = 0;
+	foreach ( $rows as $row ) {
+		$extra = arsenal_settings_arm_payment_log_extra_vars_array( isset( $row['arm_extra_vars'] ) ? $row['arm_extra_vars'] : '' );
+		if ( empty( $extra['manual_by'] ) || 'Paid By system' !== (string) $extra['manual_by'] ) {
+			continue;
+		}
+
+		$source = isset( $extra['arsenal_source'] ) ? (string) $extra['arsenal_source'] : '';
+
+		$user_id = isset( $row['arm_user_id'] ) ? (int) $row['arm_user_id'] : 0;
+		if ( $user_id < 1 ) {
+			continue;
+		}
+
+		$user = get_userdata( $user_id );
+		if ( ! $user ) {
+			continue;
+		}
+
+		$wc_order_id    = isset( $extra['woocommerce_order_id'] ) ? (int) $extra['woocommerce_order_id'] : 0;
+		$payment_datetime = '';
+
+		if ( 'woocommerce_stripe_payment_log_backfill' === $source && $wc_order_id > 0 && function_exists( 'wc_get_order' ) ) {
+			$order = wc_get_order( $wc_order_id );
+			if ( $order && is_object( $order ) ) {
+				$payment_datetime = arsenal_settings_get_wc_order_payment_date( $order );
+			}
+		}
+
+		if ( '' === $payment_datetime ) {
+			$stripe_match = arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, $row );
+			if ( ! is_wp_error( $stripe_match ) && ! empty( $stripe_match ) ) {
+				$payment_datetime = arsenal_settings_resolve_arm_payment_datetime_from_stripe_match( $stripe_match, $wc_order_id );
+			}
+		}
+
+		if ( '' === $payment_datetime ) {
+			continue;
+		}
+
+		$current_created = isset( $row['arm_created_date'] ) ? (string) $row['arm_created_date'] : '';
+		if ( $current_created === $payment_datetime ) {
+			continue;
+		}
+
+		$log_id = isset( $row['arm_log_id'] ) ? (int) $row['arm_log_id'] : 0;
+		if ( $log_id < 1 ) {
+			continue;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+		$result = $wpdb->update(
+			$table,
+			array(
+				'arm_created_date' => $payment_datetime,
+				'arm_payment_date' => $payment_datetime,
+			),
+			array( 'arm_log_id' => $log_id ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+
+		if ( false !== $result && (int) $result > 0 ) {
+			$updated += (int) $result;
+			arsenal_settings_wc_stripe_arm_cron_log(
+				'payment_log_date_backfilled',
+				array(
+					'arm_log_id'         => $log_id,
+					'user_id'            => $user_id,
+					'arm_created_before' => $current_created,
+					'arm_created_after'  => $payment_datetime,
+				)
+			);
+		}
+	}
+
+	return $updated;
 }
 
 /**
@@ -5083,14 +5290,17 @@ function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
 		}
 	}
 
+	$payment_dates_backfilled = arsenal_settings_backfill_repaired_arm_payment_log_dates( 14 );
+
 	arsenal_settings_wc_stripe_arm_cron_log(
 		'cron_complete',
 		array(
-			'orders_checked'       => count( $orders ),
-			'total_inserted'       => $total_inserted,
-			'failed_logs_checked'  => is_array( $failed_rows ) ? count( $failed_rows ) : 0,
-			'failed_logs_repaired' => $repaired_failed_logs,
-			'duration_ms'          => (int) round( 1000 * ( microtime( true ) - $started ) ),
+			'orders_checked'           => count( $orders ),
+			'total_inserted'             => $total_inserted,
+			'failed_logs_checked'        => is_array( $failed_rows ) ? count( $failed_rows ) : 0,
+			'failed_logs_repaired'       => $repaired_failed_logs,
+			'payment_dates_backfilled'   => $payment_dates_backfilled,
+			'duration_ms'                => (int) round( 1000 * ( microtime( true ) - $started ) ),
 		)
 	);
 }
