@@ -4960,19 +4960,37 @@ add_action( 'woocommerce_payment_complete', 'arsenal_settings_sync_wc_stripe_ord
 add_filter( 'pre_wp_mail', 'arsenal_settings_pre_wp_mail_suppress_false_arm_failed_admin', 5, 2 );
 
 /**
- * Schedule the missed WooCommerce Stripe renewal backfill cron every 12 hours.
+ * Register a 2-hour cron interval for WooCommerce Stripe renewal backfill.
+ *
+ * @param array $schedules Existing WP-Cron schedules.
+ * @return array
+ */
+function arsenal_settings_cron_schedules( $schedules ) {
+	if ( ! isset( $schedules['every_two_hours'] ) ) {
+		$schedules['every_two_hours'] = array(
+			'interval' => 2 * HOUR_IN_SECONDS,
+			'display'  => __( 'Every 2 Hours', 'arsenal-settings' ),
+		);
+	}
+
+	return $schedules;
+}
+add_filter( 'cron_schedules', 'arsenal_settings_cron_schedules' );
+
+/**
+ * Schedule the missed WooCommerce Stripe renewal backfill cron every 2 hours.
  */
 function arsenal_settings_schedule_wc_stripe_arm_payment_log_cron() {
 	$hook     = 'arsenal_settings_sync_wc_stripe_arm_payment_logs';
 	$schedule = wp_get_schedule( $hook );
 
-	if ( $schedule && 'twicedaily' !== $schedule ) {
+	if ( $schedule && 'every_two_hours' !== $schedule ) {
 		wp_clear_scheduled_hook( $hook );
 		$schedule = false;
 	}
 
 	if ( ! $schedule && ! wp_next_scheduled( $hook ) ) {
-		wp_schedule_event( time() + HOUR_IN_SECONDS, 'twicedaily', $hook );
+		wp_schedule_event( time() + HOUR_IN_SECONDS, 'every_two_hours', $hook );
 	}
 }
 add_action( 'init', 'arsenal_settings_schedule_wc_stripe_arm_payment_log_cron' );
