@@ -17,6 +17,7 @@ define( 'ARSENAL_SETTINGS_VERSION', '1.0.1' );
 define( 'ARSENAL_SETTINGS_REST_NAMESPACE', 'arsenal-settings/v1' );
 
 require_once __DIR__ . '/arsenal-settings-rest-ensure-recurring-by-active-membership.php';
+require_once __DIR__ . '/arsenal-settings-woocommerce-payment-failures.php';
 
 /** User meta key: plaintext API key shown once after generation (must match saved option). */
 function arsenal_settings_pending_api_key_usermeta_key() {
@@ -2225,7 +2226,7 @@ function arsenal_settings_api_process_log( $message, array $extra = array() ) {
  * @return string Regex without delimiters.
  */
 function arsenal_settings_allowed_log_file_pattern() {
-	return '^(api|wc-stripe-arm-cron)-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$';
+	return '^(api|wc-stripe-arm-cron|wc-dd-payment-failures)-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$';
 }
 
 /**
@@ -2256,6 +2257,14 @@ function arsenal_settings_wc_stripe_arm_cron_log( $message, array $extra = array
 	}
 
 	file_put_contents( $file, $line . "\n", FILE_APPEND | LOCK_EX );
+
+	/**
+	 * Fires after a WooCommerce Stripe ARMember cron log line is written.
+	 *
+	 * @param string $message Event name.
+	 * @param array  $extra   Context (redacted).
+	 */
+	do_action( 'arsenal_settings_wc_stripe_arm_cron_logged', $message, $extra );
 }
 
 /**
@@ -2426,6 +2435,15 @@ function arsenal_settings_rest_api_log_finish( $response, $server, $request ) {
 	}
 
 	arsenal_settings_rest_api_write_log_line( $entry, $response );
+
+	/**
+	 * Fires after an Arsenal REST API log line is written (payment failure UI listens here).
+	 *
+	 * @param array                $entry    Log entry built for this request.
+	 * @param WP_HTTP_Response|mixed $response REST response.
+	 */
+	do_action( 'arsenal_settings_rest_api_logged', $entry, $response );
+
 	return $response;
 }
 
@@ -6077,7 +6095,7 @@ function arsenal_settings_redirect_legacy_settings_urls() {
 		return;
 	}
 	$page = sanitize_text_field( wp_unslash( (string) $_GET['page'] ) );
-	if ( ! in_array( $page, array( 'arsenal-settings', 'arsenal-settings-stripe', 'arsenal-settings-api-logs' ), true ) ) {
+	if ( ! in_array( $page, array( 'arsenal-settings', 'arsenal-settings-stripe', 'arsenal-settings-api-logs', 'arsenal-settings-wc-dd-failures' ), true ) ) {
 		return;
 	}
 	wp_safe_redirect( arsenal_settings_admin_page_url( $page ) );
@@ -6415,9 +6433,11 @@ function arsenal_settings_render_api_logs_page() {
 	if ( $dir !== '' && is_dir( $dir ) ) {
 		$api_glob  = glob( $dir . 'api-*.log' );
 		$cron_glob = glob( $dir . 'wc-stripe-arm-cron-*.log' );
+		$dd_glob   = glob( $dir . 'wc-dd-payment-failures-*.log' );
 		$files     = array_merge(
 			is_array( $api_glob ) ? $api_glob : array(),
-			is_array( $cron_glob ) ? $cron_glob : array()
+			is_array( $cron_glob ) ? $cron_glob : array(),
+			is_array( $dd_glob ) ? $dd_glob : array()
 		);
 		if ( array() !== $files ) {
 			usort(
@@ -6450,7 +6470,7 @@ function arsenal_settings_render_api_logs_page() {
 			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-stripe' ) ); ?>"><?php esc_html_e( 'Stripe', 'arsenal-settings' ); ?></a>
 		</p>
 		<p class="description">
-			<?php esc_html_e( 'NDJSON logs for Arsenal REST routes (api-YYYY-MM-DD.log) and the WooCommerce Stripe ARMember sync cron (wc-stripe-arm-cron-YYYY-MM-DD.log). Sensitive fields are redacted. Logs are stored under uploads in a directory not meant for public access.', 'arsenal-settings' ); ?>
+			<?php esc_html_e( 'NDJSON logs for Arsenal REST routes (api-YYYY-MM-DD.log), the WooCommerce Stripe ARMember sync cron (wc-stripe-arm-cron-YYYY-MM-DD.log), and direct debit payment failures (wc-dd-payment-failures-YYYY-MM-DD.log). Sensitive fields are redacted. Logs are stored under uploads in a directory not meant for public access.', 'arsenal-settings' ); ?>
 		</p>
 		<?php if ( is_wp_error( $dir_res ) ) : ?>
 			<div class="notice notice-error"><p><?php echo esc_html( $dir_res->get_error_message() ); ?></p></div>
