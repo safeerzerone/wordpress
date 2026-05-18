@@ -4123,11 +4123,13 @@ function arsenal_settings_arm_payment_log_extra_vars_array( $raw ) {
  * @param int    $user_id       WordPress user id.
  * @param int    $plan_id       ARMember plan id.
  * @param int    $order_id      WooCommerce order id (optional when Stripe charge/intent ids are supplied).
- * @param string $stripe_charge Stripe charge id from the order (optional).
- * @param string $stripe_intent Stripe PaymentIntent id from the order (optional).
+ * @param string $stripe_charge        Stripe charge id from the order (optional).
+ * @param string $stripe_intent        Stripe PaymentIntent id from the order (optional).
+ * @param string $stripe_subscription  Stripe subscription id (optional).
+ * @param string $stripe_invoice       Stripe invoice id (optional).
  * @return int Existing `arm_log_id` or 0.
  */
-function arsenal_settings_arm_find_existing_wc_stripe_success_payment_log_id( $table, $user_id, $plan_id, $order_id, $stripe_charge = '', $stripe_intent = '' ) {
+function arsenal_settings_arm_find_existing_wc_stripe_success_payment_log_id( $table, $user_id, $plan_id, $order_id, $stripe_charge = '', $stripe_intent = '', $stripe_subscription = '', $stripe_invoice = '' ) {
 	global $wpdb;
 
 	$user_id  = (int) $user_id;
@@ -4138,18 +4140,19 @@ function arsenal_settings_arm_find_existing_wc_stripe_success_payment_log_id( $t
 		return 0;
 	}
 
-	$stripe_charge = is_string( $stripe_charge ) ? $stripe_charge : '';
-	$stripe_intent = is_string( $stripe_intent ) ? $stripe_intent : '';
+	$stripe_charge        = is_string( $stripe_charge ) ? $stripe_charge : '';
+	$stripe_intent        = is_string( $stripe_intent ) ? $stripe_intent : '';
+	$stripe_subscription  = is_string( $stripe_subscription ) ? $stripe_subscription : '';
+	$stripe_invoice       = is_string( $stripe_invoice ) ? $stripe_invoice : '';
 
 	$txn_values = array();
 	if ( $order_id > 0 ) {
 		$txn_values[] = (string) $order_id;
 	}
-	if ( '' !== $stripe_charge ) {
-		$txn_values[] = $stripe_charge;
-	}
-	if ( '' !== $stripe_intent ) {
-		$txn_values[] = $stripe_intent;
+	foreach ( array( $stripe_charge, $stripe_intent, $stripe_invoice, $stripe_subscription ) as $stripe_id ) {
+		if ( '' !== $stripe_id ) {
+			$txn_values[] = $stripe_id;
+		}
 	}
 	$txn_values = array_values( array_unique( array_filter( $txn_values, function ( $v ) {
 		return '' !== (string) $v;
@@ -4171,13 +4174,22 @@ function arsenal_settings_arm_find_existing_wc_stripe_success_payment_log_id( $t
 		$params[]   = '%' . $wpdb->esc_like( '"woocommerce_order_id";i:' . $order_id . ';' ) . '%';
 	}
 
-	if ( '' !== $stripe_charge && preg_match( '/^ch_[a-zA-Z0-9]+$/', $stripe_charge ) ) {
-		$or_parts[] = '`arm_extra_vars` LIKE %s';
-		$params[]   = '%' . $wpdb->esc_like( $stripe_charge ) . '%';
+	$stripe_like_ids = array(
+		$stripe_charge       => '/^ch_[a-zA-Z0-9]+$/',
+		$stripe_intent       => '/^pi_[a-zA-Z0-9]+$/',
+		$stripe_invoice      => '/^in_[a-zA-Z0-9]+$/',
+		$stripe_subscription => '/^sub_[a-zA-Z0-9]+$/',
+	);
+	foreach ( $stripe_like_ids as $stripe_id => $pattern ) {
+		if ( '' !== $stripe_id && preg_match( $pattern, $stripe_id ) ) {
+			$or_parts[] = '`arm_extra_vars` LIKE %s';
+			$params[]   = '%' . $wpdb->esc_like( $stripe_id ) . '%';
+		}
 	}
-	if ( '' !== $stripe_intent && preg_match( '/^pi_[a-zA-Z0-9]+$/', $stripe_intent ) ) {
-		$or_parts[] = '`arm_extra_vars` LIKE %s';
-		$params[]   = '%' . $wpdb->esc_like( $stripe_intent ) . '%';
+
+	if ( '' !== $stripe_subscription && preg_match( '/^sub_[a-zA-Z0-9]+$/', $stripe_subscription ) ) {
+		$or_parts[] = '`arm_token` = %s';
+		$params[]   = $stripe_subscription;
 	}
 
 	if ( empty( $or_parts ) ) {
@@ -4187,13 +4199,167 @@ function arsenal_settings_arm_find_existing_wc_stripe_success_payment_log_id( $t
 	$where_or = implode( ' OR ', $or_parts );
 
 	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper; OR clause built from fixed patterns.
-	$sql = "SELECT `arm_log_id` FROM `{$table}` WHERE `arm_user_id` = %d AND `arm_plan_id` = %d AND `arm_payment_gateway` = %s AND `arm_transaction_status` = %s AND ( {$where_or} ) ORDER BY `arm_log_id` DESC LIMIT 1";
+	$sql = "SELECT `arm_log_id` FROM `{$table}` WHERE `arm_user_id` = %d AND `arm_plan_id` = %d AND `arm_payment_gateway` = %s AND `arm_transaction_status` = %s AND ( {$where_or} ) ORDER BY `arm_log_id` ASC LIMIT 1";
 
 	// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Dynamic OR list; values are passed via prepare.
 	$prepared = $wpdb->prepare( $sql, $params );
 
 	// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 	return (int) $wpdb->get_var( $prepared );
+}
+
+/**
+ * Build a stable grouping key for duplicate WooCommerce success payment-log rows.
+ *
+ * @param array $row Payment-log row.
+ * @return string
+ */
+function arsenal_settings_arm_payment_log_dedupe_key( array $row ) {
+	$user_id = isset( $row['arm_user_id'] ) ? (int) $row['arm_user_id'] : 0;
+	$plan_id = isset( $row['arm_plan_id'] ) ? (int) $row['arm_plan_id'] : 0;
+	$extra   = arsenal_settings_arm_payment_log_extra_vars_array( isset( $row['arm_extra_vars'] ) ? $row['arm_extra_vars'] : '' );
+
+	$refs = array();
+	$txn  = isset( $row['arm_transaction_id'] ) ? (string) $row['arm_transaction_id'] : '';
+	if ( preg_match( '/^(ch_|pi_|in_|sub_)[a-zA-Z0-9]+$/', $txn ) ) {
+		$refs[] = $txn;
+	}
+	foreach ( array( 'stripe_charge_id', 'stripe_payment_intent_id', 'stripe_invoice_id', 'stripe_subscription_id' ) as $meta_key ) {
+		if ( ! empty( $extra[ $meta_key ] ) ) {
+			$refs[] = (string) $extra[ $meta_key ];
+		}
+	}
+	if ( ! empty( $extra['woocommerce_order_id'] ) ) {
+		$refs[] = 'wc_order:' . (int) $extra['woocommerce_order_id'];
+	}
+	$token = isset( $row['arm_token'] ) ? (string) $row['arm_token'] : '';
+	if ( preg_match( '/^sub_[a-zA-Z0-9]+$/', $token ) ) {
+		$refs[] = $token;
+	}
+
+	$refs = array_values( array_unique( array_filter( $refs ) ) );
+	sort( $refs );
+
+	if ( ! empty( $refs ) ) {
+		return $user_id . '|' . $plan_id . '|' . implode( '|', $refs );
+	}
+
+	$created = isset( $row['arm_created_date'] ) ? substr( (string) $row['arm_created_date'], 0, 16 ) : '';
+	$amount  = isset( $row['arm_amount'] ) ? number_format( (float) $row['arm_amount'], 2, '.', '' ) : '0.00';
+
+	return $user_id . '|' . $plan_id . '|' . $created . '|' . $amount;
+}
+
+/**
+ * Score a payment-log row when picking which duplicate to keep (higher is better).
+ *
+ * @param array $row Payment-log row.
+ * @return int
+ */
+function arsenal_settings_arm_payment_log_dedupe_keep_score( array $row ) {
+	$extra  = arsenal_settings_arm_payment_log_extra_vars_array( isset( $row['arm_extra_vars'] ) ? $row['arm_extra_vars'] : '' );
+	$score  = 0;
+	$source = isset( $extra['arsenal_source'] ) ? (string) $extra['arsenal_source'] : '';
+
+	if ( ! empty( $extra['woocommerce_order_id'] ) ) {
+		$score += 100;
+	}
+	if ( 'woocommerce_stripe_payment_log_backfill' === $source ) {
+		$score += 50;
+	}
+	if ( 'stripe_direct_subscription_failed_log_repair' === $source ) {
+		$score += 25;
+	}
+	if ( empty( $extra['manual_by'] ) ) {
+		$score += 10;
+	}
+
+	return $score;
+}
+
+/**
+ * Remove duplicate successful WooCommerce payment-log rows (same renewal / Stripe payment).
+ *
+ * @param int $days Look-back window in days.
+ * @return int Number of rows deleted.
+ */
+function arsenal_settings_arm_dedupe_duplicate_wc_success_payment_logs( $days = 30 ) {
+	global $wpdb;
+
+	$days  = max( 1, (int) $days );
+	$table = arsenal_settings_get_armember_payment_log_table();
+	if ( '' === $table ) {
+		return 0;
+	}
+
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+	$rows = $wpdb->get_results(
+		$wpdb->prepare(
+			"SELECT * FROM `{$table}` WHERE `arm_payment_gateway` = %s AND `arm_transaction_status` = %s AND `arm_created_date` >= %s ORDER BY `arm_log_id` ASC",
+			'woocommerce',
+			'success',
+			gmdate( 'Y-m-d H:i:s', strtotime( '-' . $days . ' days' ) )
+		),
+		ARRAY_A
+	);
+
+	if ( ! is_array( $rows ) || count( $rows ) < 2 ) {
+		return 0;
+	}
+
+	$groups = array();
+	foreach ( $rows as $row ) {
+		$key = arsenal_settings_arm_payment_log_dedupe_key( $row );
+		if ( ! isset( $groups[ $key ] ) ) {
+			$groups[ $key ] = array();
+		}
+		$groups[ $key ][] = $row;
+	}
+
+	$deleted = 0;
+	foreach ( $groups as $key => $group_rows ) {
+		if ( count( $group_rows ) < 2 ) {
+			continue;
+		}
+
+		usort(
+			$group_rows,
+			function ( $a, $b ) {
+				$score_cmp = arsenal_settings_arm_payment_log_dedupe_keep_score( $b ) <=> arsenal_settings_arm_payment_log_dedupe_keep_score( $a );
+				if ( 0 !== $score_cmp ) {
+					return $score_cmp;
+				}
+
+				return (int) $a['arm_log_id'] <=> (int) $b['arm_log_id'];
+			}
+		);
+
+		$keeper = array_shift( $group_rows );
+		foreach ( $group_rows as $dup_row ) {
+			$dup_id = isset( $dup_row['arm_log_id'] ) ? (int) $dup_row['arm_log_id'] : 0;
+			if ( $dup_id < 1 ) {
+				continue;
+			}
+
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+			$result = $wpdb->delete( $table, array( 'arm_log_id' => $dup_id ), array( '%d' ) );
+			if ( false !== $result && (int) $result > 0 ) {
+				$deleted += (int) $result;
+				arsenal_settings_wc_stripe_arm_cron_log(
+					'payment_log_duplicate_removed',
+					array(
+						'dedupe_key'       => $key,
+						'kept_arm_log_id'  => isset( $keeper['arm_log_id'] ) ? (int) $keeper['arm_log_id'] : 0,
+						'removed_arm_log_id' => $dup_id,
+						'user_id'          => isset( $keeper['arm_user_id'] ) ? (int) $keeper['arm_user_id'] : 0,
+						'plan_id'          => isset( $keeper['arm_plan_id'] ) ? (int) $keeper['arm_plan_id'] : 0,
+					)
+				);
+			}
+		}
+	}
+
+	return $deleted;
 }
 
 /**
@@ -4647,10 +4813,31 @@ function arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( array $
 		$plan_id,
 		$wc_order_id,
 		isset( $stripe_match['latest_charge_id'] ) ? (string) $stripe_match['latest_charge_id'] : '',
-		isset( $stripe_match['payment_intent_id'] ) ? (string) $stripe_match['payment_intent_id'] : ''
+		isset( $stripe_match['payment_intent_id'] ) ? (string) $stripe_match['payment_intent_id'] : '',
+		isset( $stripe_match['subscription_id'] ) ? (string) $stripe_match['subscription_id'] : '',
+		isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : ''
 	);
 
 	arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id, $stripe_match );
+
+	if ( 0 === $duplicate_success_id ) {
+		$payment_datetime_probe = arsenal_settings_resolve_arm_payment_datetime_from_stripe_match( $stripe_match, $wc_order_id );
+		if ( '' !== $payment_datetime_probe ) {
+			$amount = isset( $failed_row['arm_amount'] ) ? (float) $failed_row['arm_amount'] : 0;
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+			$duplicate_success_id = (int) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT `arm_log_id` FROM `{$table}` WHERE `arm_user_id` = %d AND `arm_plan_id` = %d AND `arm_payment_gateway` = %s AND `arm_transaction_status` = %s AND `arm_created_date` = %s AND `arm_amount` = %f ORDER BY `arm_log_id` ASC LIMIT 1",
+					$user_id,
+					$plan_id,
+					'woocommerce',
+					'success',
+					$payment_datetime_probe,
+					$amount
+				)
+			);
+		}
+	}
 
 	if ( $duplicate_success_id > 0 && $duplicate_success_id !== $log_id ) {
 		$payment_datetime = arsenal_settings_resolve_arm_payment_datetime_from_stripe_match( $stripe_match, $wc_order_id );
@@ -5032,6 +5219,10 @@ function arsenal_settings_sync_wc_stripe_order_to_arm_payment_log( $order_id, $c
 	$stripe_charge  = method_exists( $order, 'get_transaction_id' ) ? (string) $order->get_transaction_id() : '';
 	$stripe_intent  = (string) arsenal_settings_wc_order_meta( $order, '_stripe_intent_id' );
 	$stripe_customer = (string) arsenal_settings_wc_order_meta( $order, '_stripe_customer_id' );
+	$stripe_subscription = (string) arsenal_settings_wc_order_meta( $order, '_stripe_subscription_id' );
+	if ( '' === $stripe_subscription ) {
+		$stripe_subscription = (string) arsenal_settings_wc_order_meta( $order, '_subscription_renewal' );
+	}
 	$inserted       = 0;
 
 	foreach ( $plan_ids as $plan_id ) {
@@ -5043,7 +5234,9 @@ function arsenal_settings_sync_wc_stripe_order_to_arm_payment_log( $order_id, $c
 			(int) $plan_id,
 			$order_id,
 			$stripe_charge,
-			$stripe_intent
+			$stripe_intent,
+			$stripe_subscription,
+			''
 		);
 		if ( $existing_log_id > 0 ) {
 			if ( $cron_log ) {
@@ -5291,6 +5484,7 @@ function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
 	}
 
 	$payment_dates_backfilled = arsenal_settings_backfill_repaired_arm_payment_log_dates( 14 );
+	$duplicates_removed       = arsenal_settings_arm_dedupe_duplicate_wc_success_payment_logs( 30 );
 
 	arsenal_settings_wc_stripe_arm_cron_log(
 		'cron_complete',
@@ -5300,6 +5494,7 @@ function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
 			'failed_logs_checked'        => is_array( $failed_rows ) ? count( $failed_rows ) : 0,
 			'failed_logs_repaired'       => $repaired_failed_logs,
 			'payment_dates_backfilled'   => $payment_dates_backfilled,
+			'duplicate_logs_removed'     => $duplicates_removed,
 			'duration_ms'                => (int) round( 1000 * ( microtime( true ) - $started ) ),
 		)
 	);
