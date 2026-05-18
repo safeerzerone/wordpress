@@ -4363,7 +4363,137 @@ function arsenal_settings_arm_dedupe_duplicate_wc_success_payment_logs( $days = 
 }
 
 /**
- * Whether the member has a recent successful WooCommerce Stripe payment log tied to a still-paid order (used to avoid false "failed payment" admin alerts).
+ * Resolve the next ARMember due timestamp after a successful WooCommerce / Stripe renewal.
+ *
+ * ARMember's failed-payment cron compares `arm_next_due_payment + 24 hours` to now. When WooCommerce renewals
+ * do not advance that meta, members with successful Stripe charges still receive false failed-payment alerts.
+ *
+ * @param int           $user_id WordPress user id.
+ * @param int           $plan_id ARMember plan id.
+ * @param WC_Order|null $order   WooCommerce order (optional).
+ * @return int Unix timestamp for the next due date, or 0 when unknown.
+ */
+function arsenal_settings_resolve_arm_next_due_payment_timestamp( $user_id, $plan_id, $order = null ) {
+	global $arm_members_class;
+
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return 0;
+	}
+
+	$now        = current_time( 'timestamp' );
+	$candidates = array();
+	$stripe_sub = '';
+
+	if ( is_object( $order ) ) {
+		foreach ( array( '_stripe_subscription_id', 'stripe_subscription_id' ) as $meta_key ) {
+			$stripe_sub = (string) arsenal_settings_wc_order_meta( $order, $meta_key );
+			if ( '' !== $stripe_sub && preg_match( '/^sub_[a-zA-Z0-9]+$/', $stripe_sub ) ) {
+				break;
+			}
+			$stripe_sub = '';
+		}
+
+		$wps_subscription_id = (int) arsenal_settings_wc_order_meta( $order, 'wps_sfw_subscription' );
+		if ( $wps_subscription_id > 0 && function_exists( 'wps_sfw_get_meta_data' ) ) {
+			$wps_next = arsenal_settings_parse_arm_timestamp( wps_sfw_get_meta_data( $wps_subscription_id, 'wps_next_payment_date', true ) );
+			if ( $wps_next > 0 ) {
+				$candidates[] = $wps_next;
+			}
+		}
+	}
+
+	if ( '' !== $stripe_sub ) {
+		$subscription = arsenal_settings_stripe_get_subscription( $stripe_sub );
+		if ( ! is_wp_error( $subscription ) && ! empty( $subscription['current_period_end'] ) ) {
+			$candidates[] = (int) $subscription['current_period_end'];
+		}
+	}
+
+	if ( empty( $candidates ) ) {
+		$user = get_userdata( $user_id );
+		if ( $user ) {
+			$plan_data    = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+			$failed_row   = array(
+				'arm_user_id'  => $user_id,
+				'arm_plan_id'  => $plan_id,
+				'arm_currency' => is_array( $plan_data ) && ! empty( $plan_data['arm_currency'] ) ? (string) $plan_data['arm_currency'] : '',
+			);
+			$stripe_match = arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, $failed_row );
+			if ( ! is_wp_error( $stripe_match ) && ! empty( $stripe_match['current_period_end'] ) ) {
+				$candidates[] = (int) $stripe_match['current_period_end'];
+			}
+		}
+	}
+
+	if ( is_object( $arm_members_class ) && method_exists( $arm_members_class, 'arm_get_next_due_date' ) ) {
+		$plan_data     = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+		$payment_cycle = is_array( $plan_data ) && isset( $plan_data['arm_payment_cycle'] ) ? $plan_data['arm_payment_cycle'] : 0;
+		$arm_next      = $arm_members_class->arm_get_next_due_date( $user_id, $plan_id, false, $payment_cycle );
+		$arm_ts        = is_numeric( $arm_next ) ? (int) $arm_next : arsenal_settings_parse_arm_timestamp( $arm_next );
+		if ( $arm_ts > 0 ) {
+			$candidates[] = $arm_ts;
+		}
+	}
+
+	$best = 0;
+	foreach ( $candidates as $timestamp ) {
+		$timestamp = (int) $timestamp;
+		if ( $timestamp > $best ) {
+			$best = $timestamp;
+		}
+	}
+
+	if ( $best > $now ) {
+		return $best;
+	}
+
+	foreach ( $candidates as $timestamp ) {
+		$timestamp = (int) $timestamp;
+		if ( $timestamp > $now ) {
+			return $timestamp;
+		}
+	}
+
+	return $best;
+}
+
+/**
+ * Apply `arm_next_due_payment` (and related grace flags) on a member plan row.
+ *
+ * @param array $user_plan_data Plan meta row.
+ * @param int   $next_due       Next due unix timestamp.
+ * @return array
+ */
+function arsenal_settings_apply_arm_next_due_payment_to_plan_data( array $user_plan_data, $next_due ) {
+	$next_due = (int) $next_due;
+	if ( $next_due < 1 ) {
+		return $user_plan_data;
+	}
+
+	$user_plan_data['arm_next_due_payment'] = $next_due;
+	if ( ! empty( $user_plan_data['arm_expire_plan'] ) && (int) $user_plan_data['arm_expire_plan'] < $next_due ) {
+		$user_plan_data['arm_expire_plan'] = $next_due;
+	}
+
+	$user_plan_data['arm_is_user_in_grace']    = '0';
+	$user_plan_data['arm_grace_period_end']    = '';
+	$user_plan_data['arm_grace_period_action'] = '';
+
+	if ( ! empty( $user_plan_data['arm_sent_msgs'] ) && is_array( $user_plan_data['arm_sent_msgs'] ) ) {
+		foreach ( $user_plan_data['arm_sent_msgs'] as $msg_key => $msg_val ) {
+			if ( false !== strpos( (string) $msg_key, 'failed_payment' ) || false !== strpos( (string) $msg_val, 'failed_payment' ) ) {
+				unset( $user_plan_data['arm_sent_msgs'][ $msg_key ] );
+			}
+		}
+	}
+
+	return $user_plan_data;
+}
+
+/**
+ * Whether the member has a recent successful WooCommerce Stripe payment log tied to a still-paid order.
  *
  * @param int $user_id WordPress user id.
  * @param int $days    Look-back window in days.
@@ -4417,142 +4547,6 @@ function arsenal_settings_arm_user_has_recent_paid_wc_stripe_success_log( $user_
 	}
 
 	return false;
-}
-
-/**
- * Heuristic: ARMember "failed payment" email to admin (subject + HTML body shape).
- *
- * @param array $atts wp_mail argument array.
- * @return bool
- */
-function arsenal_settings_is_likely_armember_admin_failed_payment_mail( array $atts ) {
-	$subject = isset( $atts['subject'] ) ? (string) $atts['subject'] : '';
-	$message = isset( $atts['message'] ) ? (string) $atts['message'] : '';
-	if ( '' === $subject || '' === $message ) {
-		return false;
-	}
-
-	$subject_l = strtolower( $subject );
-	if ( false === strpos( $subject_l, 'failed' ) ) {
-		return false;
-	}
-	if ( false === strpos( $subject_l, 'payment' ) && false === strpos( $subject_l, 'membership' ) ) {
-		return false;
-	}
-
-	$message_l = strtolower( $message );
-	if ( false === strpos( $message_l, 'administrator' ) && false === strpos( $message_l, 'admin' ) ) {
-		return false;
-	}
-	if ( false === strpos( $message_l, 'recurring' ) && false === strpos( $message_l, 'payment method' ) ) {
-		return false;
-	}
-
-	return (bool) apply_filters( 'arsenal_settings_is_likely_armember_admin_failed_payment_mail', true, $atts );
-}
-
-/**
- * Extract plausible member email addresses from HTML mail body (ARMember failed-payment admin template).
- *
- * @param string $html Message HTML.
- * @return string[] Unique valid emails.
- */
-function arsenal_settings_extract_emails_from_mail_html( $html ) {
-	$html = (string) $html;
-	if ( '' === $html ) {
-		return array();
-	}
-
-	if ( ! preg_match_all( '/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/', $html, $m ) || empty( $m[0] ) ) {
-		return array();
-	}
-
-	$out = array();
-	foreach ( $m[0] as $addr ) {
-		$addr = strtolower( trim( $addr ) );
-		if ( is_email( $addr ) ) {
-			$out[ $addr ] = true;
-		}
-	}
-
-	return array_keys( $out );
-}
-
-/**
- * Suppress ARMember admin "failed payment" mail when WooCommerce + Stripe already shows a paid renewal for that member.
- *
- * @param null|bool $short_circuit Short-circuit return for wp_mail.
- * @param array     $atts          Compact wp_mail args.
- * @return null|bool
- */
-function arsenal_settings_pre_wp_mail_suppress_false_arm_failed_admin( $short_circuit, array $atts ) {
-	if ( null !== $short_circuit ) {
-		return $short_circuit;
-	}
-
-	if ( empty( $atts['to'] ) || empty( $atts['subject'] ) || empty( $atts['message'] ) ) {
-		return null;
-	}
-
-	if ( ! arsenal_settings_is_likely_armember_admin_failed_payment_mail( $atts ) ) {
-		return null;
-	}
-
-	$admin_emails = array();
-	$arm_settings = get_option( 'arm_email_settings' );
-	if ( is_array( $arm_settings ) && ! empty( $arm_settings['arm_email_admin_email'] ) ) {
-		$raw = $arm_settings['arm_email_admin_email'];
-		$raw = strpos( (string) $raw, ',' ) !== false ? explode( ',', (string) $raw ) : array( $raw );
-		foreach ( $raw as $e ) {
-			$e = trim( (string) $e );
-			if ( is_email( $e ) ) {
-				$admin_emails[ strtolower( $e ) ] = true;
-			}
-		}
-	}
-	$wp_admin = strtolower( (string) get_option( 'admin_email' ) );
-	if ( is_email( $wp_admin ) ) {
-		$admin_emails[ $wp_admin ] = true;
-	}
-	if ( empty( $admin_emails ) ) {
-		return null;
-	}
-
-	$tos = $atts['to'];
-	if ( ! is_array( $tos ) ) {
-		$tos = array_map( 'trim', explode( ',', (string) $tos ) );
-	}
-
-	$all_admin_recipients = true;
-	foreach ( $tos as $one ) {
-		$one = strtolower( trim( (string) $one ) );
-		if ( '' === $one || ! isset( $admin_emails[ $one ] ) ) {
-			$all_admin_recipients = false;
-			break;
-		}
-	}
-	if ( ! $all_admin_recipients || empty( $tos ) ) {
-		return null;
-	}
-
-	$candidate_emails = arsenal_settings_extract_emails_from_mail_html( (string) $atts['message'] );
-	foreach ( $candidate_emails as $addr ) {
-		if ( isset( $admin_emails[ strtolower( $addr ) ] ) ) {
-			continue;
-		}
-		$user = get_user_by( 'email', $addr );
-		if ( ! $user || empty( $user->ID ) ) {
-			continue;
-		}
-		if ( arsenal_settings_arm_user_has_recent_paid_wc_stripe_success_log( (int) $user->ID, 7 ) ) {
-			$suppress = apply_filters( 'arsenal_settings_suppress_arm_false_failed_admin_mail', true, $atts, (int) $user->ID );
-			if ( $suppress ) {
-				return true;
-			}
-		}
-	}
-
-	return null;
 }
 
 /**
@@ -4752,16 +4746,31 @@ function arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id
 		update_user_meta( $user_id, 'arm_user_plan_ids', array_values( array_unique( $active_plan_ids ) ) );
 	}
 
-	$user_plan_data['arm_user_gateway']         = 'woocommerce';
-	$user_plan_data['arm_payment_mode']         = 'manual_subscription';
-	$user_plan_data['arm_cencelled_plan']       = '';
-	$user_plan_data['arm_is_user_in_grace']     = '0';
-	$user_plan_data['arm_grace_period_end']     = '';
-	$user_plan_data['arm_grace_period_action']  = '';
-	if ( ! empty( $stripe_match['current_period_end'] ) && (int) $stripe_match['current_period_end'] > current_time( 'timestamp' ) ) {
-		$user_plan_data['arm_next_due_payment'] = (int) $stripe_match['current_period_end'];
-		if ( ! empty( $user_plan_data['arm_expire_plan'] ) && (int) $user_plan_data['arm_expire_plan'] < (int) $stripe_match['current_period_end'] ) {
-			$user_plan_data['arm_expire_plan'] = (int) $stripe_match['current_period_end'];
+	$user_plan_data['arm_user_gateway']        = 'woocommerce';
+	$user_plan_data['arm_payment_mode']        = 'manual_subscription';
+	$user_plan_data['arm_cencelled_plan']      = '';
+	$user_plan_data['arm_is_user_in_grace']    = '0';
+	$user_plan_data['arm_grace_period_end']    = '';
+	$user_plan_data['arm_grace_period_action'] = '';
+
+	$next_due = ! empty( $stripe_match['current_period_end'] ) ? (int) $stripe_match['current_period_end'] : 0;
+	if ( $next_due <= current_time( 'timestamp' ) ) {
+		$next_due = arsenal_settings_resolve_arm_next_due_payment_timestamp( $user_id, $plan_id, null );
+	}
+	if ( $next_due > 0 ) {
+		$previous_due = isset( $user_plan_data['arm_next_due_payment'] ) ? (int) $user_plan_data['arm_next_due_payment'] : 0;
+		$user_plan_data = arsenal_settings_apply_arm_next_due_payment_to_plan_data( $user_plan_data, $next_due );
+		if ( $previous_due !== (int) $user_plan_data['arm_next_due_payment'] ) {
+			arsenal_settings_api_process_log(
+				'arm_next_due_payment_updated',
+				array(
+					'user_id'      => $user_id,
+					'plan_id'      => $plan_id,
+					'source'       => 'stripe_subscription_match',
+					'previous_due' => $previous_due,
+					'next_due'     => (int) $user_plan_data['arm_next_due_payment'],
+				)
+			);
 		}
 	}
 
@@ -5093,10 +5102,10 @@ function arsenal_settings_restore_arm_plan_after_wc_stripe_payment( $user_id, $p
 		update_user_meta( $user_id, 'arm_user_plan_ids', array_values( array_unique( $active_plan_ids ) ) );
 	}
 
-	$user_plan_data['arm_user_gateway']       = 'woocommerce';
-	$user_plan_data['arm_cencelled_plan']     = '';
-	$user_plan_data['arm_is_user_in_grace']   = '0';
-	$user_plan_data['arm_grace_period_end']   = '';
+	$user_plan_data['arm_user_gateway']        = 'woocommerce';
+	$user_plan_data['arm_cencelled_plan']      = '';
+	$user_plan_data['arm_is_user_in_grace']     = '0';
+	$user_plan_data['arm_grace_period_end']    = '';
 	$user_plan_data['arm_grace_period_action'] = '';
 
 	$plan = class_exists( 'ARM_Plan' ) ? new ARM_Plan( $plan_id ) : null;
@@ -5109,21 +5118,22 @@ function arsenal_settings_restore_arm_plan_after_wc_stripe_payment( $user_id, $p
 				: 1;
 		}
 
-		$next_due = 0;
-		$subscription_id = (int) arsenal_settings_wc_order_meta( $order, 'wps_sfw_subscription' );
-		if ( $subscription_id > 0 && function_exists( 'wps_sfw_get_meta_data' ) ) {
-			$next_due = arsenal_settings_parse_arm_timestamp( wps_sfw_get_meta_data( $subscription_id, 'wps_next_payment_date', true ) );
-		}
-
-		if ( $next_due <= current_time( 'timestamp' ) && is_object( $arm_members_class ) && method_exists( $arm_members_class, 'arm_get_next_due_date' ) ) {
-			$payment_cycle = isset( $user_plan_data['arm_payment_cycle'] ) ? $user_plan_data['arm_payment_cycle'] : 0;
-			$next_due      = (int) $arm_members_class->arm_get_next_due_date( $user_id, $plan_id, false, $payment_cycle );
-		}
-
-		if ( $next_due > current_time( 'timestamp' ) ) {
-			$user_plan_data['arm_next_due_payment'] = $next_due;
-			if ( ! empty( $user_plan_data['arm_expire_plan'] ) && (int) $user_plan_data['arm_expire_plan'] < $next_due ) {
-				$user_plan_data['arm_expire_plan'] = $next_due;
+		$previous_due = isset( $user_plan_data['arm_next_due_payment'] ) ? (int) $user_plan_data['arm_next_due_payment'] : 0;
+		$next_due     = arsenal_settings_resolve_arm_next_due_payment_timestamp( $user_id, $plan_id, $order );
+		if ( $next_due > 0 ) {
+			$user_plan_data = arsenal_settings_apply_arm_next_due_payment_to_plan_data( $user_plan_data, $next_due );
+			if ( $previous_due !== (int) $user_plan_data['arm_next_due_payment'] ) {
+				arsenal_settings_api_process_log(
+					'arm_next_due_payment_updated',
+					array(
+						'user_id'      => $user_id,
+						'plan_id'      => $plan_id,
+						'order_id'     => $order_id,
+						'source'       => 'woocommerce_stripe_payment',
+						'previous_due' => $previous_due,
+						'next_due'     => (int) $user_plan_data['arm_next_due_payment'],
+					)
+				);
 			}
 		}
 	}
@@ -5357,7 +5367,62 @@ function arsenal_settings_sync_wc_stripe_order_status_to_arm_payment_log( $order
 }
 add_action( 'woocommerce_order_status_changed', 'arsenal_settings_sync_wc_stripe_order_status_to_arm_payment_log', 20, 4 );
 add_action( 'woocommerce_payment_complete', 'arsenal_settings_sync_wc_stripe_order_to_arm_payment_log', 20, 1 );
-add_filter( 'pre_wp_mail', 'arsenal_settings_pre_wp_mail_suppress_false_arm_failed_admin', 5, 2 );
+
+/**
+ * When ARMember's native WooCommerce handler records a recurring success, ensure next due date is current.
+ *
+ * @param int    $user_id      WordPress user id.
+ * @param int    $plan_id      ARMember plan id.
+ * @param string $gateway      Payment gateway slug.
+ * @param string $payment_mode Payment mode.
+ * @param mixed  $user_subsdata Subscription payload.
+ */
+function arsenal_settings_arm_after_recurring_payment_success_update_next_due( $user_id, $plan_id, $gateway, $payment_mode, $user_subsdata ) {
+	unset( $payment_mode, $user_subsdata );
+
+	if ( 'woocommerce' !== (string) $gateway ) {
+		return;
+	}
+
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return;
+	}
+
+	global $arm_subscription_plans;
+	$default_plan_data = is_object( $arm_subscription_plans ) && method_exists( $arm_subscription_plans, 'arm_default_plan_array' )
+		? $arm_subscription_plans->arm_default_plan_array()
+		: array();
+	$user_plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	$user_plan_data = is_array( $user_plan_data ) ? $user_plan_data : array();
+	if ( ! empty( $default_plan_data ) ) {
+		$user_plan_data = shortcode_atts( $default_plan_data, $user_plan_data );
+	}
+	if ( empty( $user_plan_data ) ) {
+		return;
+	}
+
+	$previous_due = isset( $user_plan_data['arm_next_due_payment'] ) ? (int) $user_plan_data['arm_next_due_payment'] : 0;
+	$next_due     = arsenal_settings_resolve_arm_next_due_payment_timestamp( $user_id, $plan_id, null );
+	if ( $next_due > 0 ) {
+		$user_plan_data = arsenal_settings_apply_arm_next_due_payment_to_plan_data( $user_plan_data, $next_due );
+		update_user_meta( $user_id, 'arm_user_plan_' . $plan_id, $user_plan_data );
+		if ( $previous_due !== (int) $user_plan_data['arm_next_due_payment'] ) {
+			arsenal_settings_api_process_log(
+				'arm_next_due_payment_updated',
+				array(
+					'user_id'      => $user_id,
+					'plan_id'      => $plan_id,
+					'source'       => 'arm_after_recurring_payment_success_outside',
+					'previous_due' => $previous_due,
+					'next_due'     => (int) $user_plan_data['arm_next_due_payment'],
+				)
+			);
+		}
+	}
+}
+add_action( 'arm_after_recurring_payment_success_outside', 'arsenal_settings_arm_after_recurring_payment_success_update_next_due', 20, 5 );
 
 /**
  * Register a 2-hour cron interval for WooCommerce Stripe renewal backfill.
