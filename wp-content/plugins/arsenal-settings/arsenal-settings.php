@@ -4009,6 +4009,348 @@ function arsenal_settings_stripe_extract_paid_at_timestamp( array $invoice, $pay
 }
 
 /**
+ * Collect Stripe object ids referenced on an ARMember payment-log row.
+ *
+ * @param array $row Payment-log row (failed or success).
+ * @return array{invoice_id:string,charge_id:string,payment_intent_id:string,subscription_id:string,order_id:int}
+ */
+function arsenal_settings_arm_payment_log_stripe_ids( array $row ) {
+	$extra = arsenal_settings_arm_payment_log_extra_vars_array( isset( $row['arm_extra_vars'] ) ? $row['arm_extra_vars'] : '' );
+
+	$invoice_id = ! empty( $extra['stripe_invoice_id'] ) ? (string) $extra['stripe_invoice_id'] : '';
+	$charge_id  = ! empty( $extra['stripe_charge_id'] ) ? (string) $extra['stripe_charge_id'] : '';
+	$intent_id  = ! empty( $extra['stripe_payment_intent_id'] ) ? (string) $extra['stripe_payment_intent_id'] : '';
+	$sub_id     = ! empty( $extra['stripe_subscription_id'] ) ? (string) $extra['stripe_subscription_id'] : '';
+	$order_id   = ! empty( $extra['woocommerce_order_id'] ) ? (int) $extra['woocommerce_order_id'] : 0;
+
+	$txn = isset( $row['arm_transaction_id'] ) ? (string) $row['arm_transaction_id'] : '';
+	if ( preg_match( '/^in_[a-zA-Z0-9]+$/', $txn ) ) {
+		$invoice_id = $txn;
+	} elseif ( preg_match( '/^ch_[a-zA-Z0-9]+$/', $txn ) ) {
+		$charge_id = $txn;
+	} elseif ( preg_match( '/^pi_[a-zA-Z0-9]+$/', $txn ) ) {
+		$intent_id = $txn;
+	} elseif ( preg_match( '/^sub_[a-zA-Z0-9]+$/', $txn ) ) {
+		$sub_id = $txn;
+	} elseif ( ctype_digit( $txn ) ) {
+		$order_id = (int) $txn;
+	}
+
+	$token = isset( $row['arm_token'] ) ? (string) $row['arm_token'] : '';
+	if ( preg_match( '/^sub_[a-zA-Z0-9]+$/', $token ) ) {
+		$sub_id = $token;
+	} elseif ( preg_match( '/^cus_[a-zA-Z0-9]+$/', $token ) ) {
+		// Customer token only; subscription resolved elsewhere.
+	}
+
+	return array(
+		'invoice_id'         => $invoice_id,
+		'charge_id'          => $charge_id,
+		'payment_intent_id'  => $intent_id,
+		'subscription_id'    => $sub_id,
+		'order_id'           => $order_id,
+	);
+}
+
+/**
+ * GET a Stripe invoice with payment_intent expanded.
+ *
+ * @param string $invoice_id in_….
+ * @return array|WP_Error
+ */
+function arsenal_settings_stripe_get_invoice( $invoice_id ) {
+	if ( ! preg_match( '/^in_[a-zA-Z0-9]+$/', (string) $invoice_id ) ) {
+		return new WP_Error( 'invalid_invoice_id', __( 'Invalid Stripe invoice id.', 'arsenal-settings' ) );
+	}
+
+	return arsenal_settings_stripe_api_get(
+		arsenal_settings_stripe_path_with_query(
+			'invoices/' . rawurlencode( (string) $invoice_id ),
+			array( 'expand' => array( 'payment_intent' ) )
+		)
+	);
+}
+
+/**
+ * List recent paid invoices for a Stripe subscription.
+ *
+ * @param string $subscription_id sub_….
+ * @param int    $limit           Max invoices (default 24).
+ * @return array<int,array>|WP_Error
+ */
+function arsenal_settings_stripe_list_invoices_for_subscription( $subscription_id, $limit = 24 ) {
+	if ( ! preg_match( '/^sub_[a-zA-Z0-9]+$/', (string) $subscription_id ) ) {
+		return new WP_Error( 'invalid_subscription_id', __( 'Invalid Stripe subscription id.', 'arsenal-settings' ) );
+	}
+
+	$limit = max( 1, min( 100, (int) $limit ) );
+	$page  = arsenal_settings_stripe_api_get(
+		arsenal_settings_stripe_path_with_query(
+			'invoices',
+			array(
+				'subscription' => (string) $subscription_id,
+				'limit'        => $limit,
+				'expand'       => array( 'data.payment_intent' ),
+			)
+		)
+	);
+	if ( is_wp_error( $page ) || empty( $page['data'] ) || ! is_array( $page['data'] ) ) {
+		return is_wp_error( $page ) ? $page : array();
+	}
+
+	$paid = array();
+	foreach ( $page['data'] as $invoice ) {
+		if ( ! is_array( $invoice ) ) {
+			continue;
+		}
+		$status = isset( $invoice['status'] ) ? (string) $invoice['status'] : '';
+		$amount = isset( $invoice['amount_paid'] ) ? (int) $invoice['amount_paid'] : 0;
+		if ( 'paid' === $status || $amount > 0 ) {
+			$paid[] = $invoice;
+		}
+	}
+
+	usort(
+		$paid,
+		static function ( $a, $b ) {
+			$pi_a = isset( $a['payment_intent'] ) && is_array( $a['payment_intent'] ) ? $a['payment_intent'] : null;
+			$pi_b = isset( $b['payment_intent'] ) && is_array( $b['payment_intent'] ) ? $b['payment_intent'] : null;
+			$ts_a = arsenal_settings_stripe_extract_paid_at_timestamp( $a, $pi_a );
+			$ts_b = arsenal_settings_stripe_extract_paid_at_timestamp( $b, $pi_b );
+			return $ts_a <=> $ts_b;
+		}
+	);
+
+	return $paid;
+}
+
+/**
+ * Build stripe_match array from a subscription + invoice pair.
+ *
+ * @param array  $invoice      Stripe invoice.
+ * @param array  $subscription Stripe subscription.
+ * @param string $customer_id  cus_….
+ * @return array
+ */
+function arsenal_settings_stripe_build_match_from_invoice( array $invoice, array $subscription, $customer_id ) {
+	$payment_intent    = isset( $invoice['payment_intent'] ) ? $invoice['payment_intent'] : null;
+	$payment_intent_id = is_array( $payment_intent ) && ! empty( $payment_intent['id'] ) ? (string) $payment_intent['id'] : '';
+	$latest_charge_id  = is_array( $payment_intent ) && ! empty( $payment_intent['latest_charge'] ) ? (string) $payment_intent['latest_charge'] : '';
+	if ( is_string( $payment_intent ) && preg_match( '/^pi_[a-zA-Z0-9]+$/', $payment_intent ) ) {
+		$payment_intent_id = $payment_intent;
+	}
+
+	return array(
+		'customer_id'         => (string) $customer_id,
+		'subscription_id'     => isset( $subscription['id'] ) ? (string) $subscription['id'] : '',
+		'subscription_status' => isset( $subscription['status'] ) ? (string) $subscription['status'] : '',
+		'current_period_end'  => isset( $subscription['current_period_end'] ) ? (int) $subscription['current_period_end'] : 0,
+		'invoice_id'          => isset( $invoice['id'] ) ? (string) $invoice['id'] : '',
+		'invoice_status'      => isset( $invoice['status'] ) ? (string) $invoice['status'] : '',
+		'amount_paid'         => isset( $invoice['amount_paid'] ) ? (int) $invoice['amount_paid'] : 0,
+		'currency'            => isset( $invoice['currency'] ) ? (string) $invoice['currency'] : '',
+		'payment_intent_id'   => $payment_intent_id,
+		'latest_charge_id'    => $latest_charge_id,
+		'paid_at'             => arsenal_settings_stripe_extract_paid_at_timestamp( $invoice, is_array( $payment_intent ) ? $payment_intent : null ),
+	);
+}
+
+/**
+ * Paid-at timestamp from a Stripe charge or PaymentIntent id.
+ *
+ * @param string $stripe_id ch_… or pi_….
+ * @return int Unix timestamp or 0.
+ */
+function arsenal_settings_stripe_paid_at_from_object_id( $stripe_id ) {
+	$stripe_id = (string) $stripe_id;
+	if ( preg_match( '/^ch_[a-zA-Z0-9]+$/', $stripe_id ) ) {
+		$charge = arsenal_settings_stripe_api_get( 'charges/' . rawurlencode( $stripe_id ) );
+		if ( ! is_wp_error( $charge ) && ! empty( $charge['created'] ) ) {
+			return (int) $charge['created'];
+		}
+	}
+	if ( preg_match( '/^pi_[a-zA-Z0-9]+$/', $stripe_id ) ) {
+		$intent = arsenal_settings_stripe_api_get( 'payment_intents/' . rawurlencode( $stripe_id ) );
+		if ( ! is_wp_error( $intent ) && ! empty( $intent['created'] ) ) {
+			return (int) $intent['created'];
+		}
+	}
+	return 0;
+}
+
+/**
+ * Pick the Stripe invoice that belongs to a specific ARMember payment-log row (not always latest_invoice).
+ *
+ * @param array  $subscription Full Stripe subscription.
+ * @param array  $log_row      ARMember payment-log row.
+ * @param string $customer_id  cus_….
+ * @return array Stripe invoice or empty array.
+ */
+function arsenal_settings_stripe_pick_invoice_for_arm_log_row( array $subscription, array $log_row, $customer_id ) {
+	$ids = arsenal_settings_arm_payment_log_stripe_ids( $log_row );
+
+	if ( preg_match( '/^in_[a-zA-Z0-9]+$/', $ids['invoice_id'] ) ) {
+		$invoice = arsenal_settings_stripe_get_invoice( $ids['invoice_id'] );
+		if ( ! is_wp_error( $invoice ) && is_array( $invoice ) && isset( $invoice['object'] ) && 'invoice' === $invoice['object'] ) {
+			return $invoice;
+		}
+	}
+
+	if ( $ids['order_id'] > 0 && function_exists( 'wc_get_order' ) ) {
+		$order = wc_get_order( $ids['order_id'] );
+		if ( $order ) {
+			foreach ( array( '_stripe_invoice_id', '_stripe_invoice', 'stripe_invoice_id' ) as $meta_key ) {
+				$inv_id = (string) arsenal_settings_wc_order_meta( $order, $meta_key );
+				if ( preg_match( '/^in_[a-zA-Z0-9]+$/', $inv_id ) ) {
+					$invoice = arsenal_settings_stripe_get_invoice( $inv_id );
+					if ( ! is_wp_error( $invoice ) && is_array( $invoice ) ) {
+						return $invoice;
+					}
+				}
+			}
+		}
+	}
+
+	$sub_id = preg_match( '/^sub_[a-zA-Z0-9]+$/', $ids['subscription_id'] ) ? $ids['subscription_id'] : '';
+	if ( '' === $sub_id && ! empty( $subscription['id'] ) ) {
+		$sub_id = (string) $subscription['id'];
+	}
+	if ( '' === $sub_id ) {
+		return arsenal_settings_stripe_subscription_latest_invoice( $subscription );
+	}
+
+	$invoices = arsenal_settings_stripe_list_invoices_for_subscription( $sub_id, 36 );
+	if ( is_wp_error( $invoices ) || empty( $invoices ) ) {
+		return arsenal_settings_stripe_subscription_latest_invoice( $subscription );
+	}
+
+	$failed_amount  = isset( $log_row['arm_amount'] ) ? (float) $log_row['arm_amount'] : 0.0;
+	$expected_minor = $failed_amount > 0 ? (int) round( $failed_amount * 100 ) : 0;
+	$hint_ts        = 0;
+	if ( ! empty( $log_row['arm_created_date'] ) ) {
+		$hint_ts = (int) strtotime( (string) $log_row['arm_created_date'] );
+	}
+	$hint_time = $hint_ts > 0 ? wp_date( 'H:i:s', $hint_ts ) : '';
+
+	$amount_matches = array();
+	foreach ( $invoices as $invoice ) {
+		if ( ! is_array( $invoice ) ) {
+			continue;
+		}
+		$inv_id = isset( $invoice['id'] ) ? (string) $invoice['id'] : '';
+		if ( $ids['invoice_id'] !== '' && $inv_id === $ids['invoice_id'] ) {
+			return $invoice;
+		}
+
+		$pi = isset( $invoice['payment_intent'] ) && is_array( $invoice['payment_intent'] ) ? $invoice['payment_intent'] : null;
+		if ( is_array( $pi ) ) {
+			if ( $ids['payment_intent_id'] !== '' && ! empty( $pi['id'] ) && (string) $pi['id'] === $ids['payment_intent_id'] ) {
+				return $invoice;
+			}
+			if ( $ids['charge_id'] !== '' && ! empty( $pi['latest_charge'] ) && (string) $pi['latest_charge'] === $ids['charge_id'] ) {
+				return $invoice;
+			}
+		}
+
+		if ( $expected_minor > 0 ) {
+			$amount_paid = isset( $invoice['amount_paid'] ) ? (int) $invoice['amount_paid'] : 0;
+			if ( $amount_paid > 0 && abs( $amount_paid - $expected_minor ) <= 1 ) {
+				$amount_matches[] = $invoice;
+			}
+		}
+	}
+
+	if ( empty( $amount_matches ) ) {
+		return arsenal_settings_stripe_subscription_latest_invoice( $subscription );
+	}
+
+	if ( 1 === count( $amount_matches ) ) {
+		return $amount_matches[0];
+	}
+
+	$best_invoice = $amount_matches[0];
+	$best_score   = PHP_INT_MAX;
+	foreach ( $amount_matches as $invoice ) {
+		$pi      = isset( $invoice['payment_intent'] ) && is_array( $invoice['payment_intent'] ) ? $invoice['payment_intent'] : null;
+		$paid_at = arsenal_settings_stripe_extract_paid_at_timestamp( $invoice, $pi );
+		if ( $paid_at < 1 ) {
+			continue;
+		}
+		$score = $hint_ts > 0 ? abs( $paid_at - $hint_ts ) : $paid_at;
+		if ( $hint_time !== '' ) {
+			$paid_time = wp_date( 'H:i:s', $paid_at );
+			if ( $paid_time === $hint_time ) {
+				$score = (int) ( $score / 2 );
+			}
+		}
+		if ( $score < $best_score ) {
+			$best_score   = $score;
+			$best_invoice = $invoice;
+		}
+	}
+
+	return is_array( $best_invoice ) ? $best_invoice : arsenal_settings_stripe_subscription_latest_invoice( $subscription );
+}
+
+/**
+ * Resolve payment datetime for one ARMember payment-log row (order, invoice id, charge, or subscription history).
+ *
+ * @param array $row Payment-log row.
+ * @return string Local mysql datetime or empty.
+ */
+function arsenal_settings_resolve_arm_payment_datetime_for_log_row( array $row ) {
+	$ids = arsenal_settings_arm_payment_log_stripe_ids( $row );
+
+	if ( $ids['order_id'] > 0 && function_exists( 'wc_get_order' ) ) {
+		$order = wc_get_order( $ids['order_id'] );
+		if ( $order && is_object( $order ) ) {
+			$from_order = arsenal_settings_get_wc_order_payment_date( $order );
+			if ( '' !== $from_order ) {
+				return $from_order;
+			}
+		}
+	}
+
+	// Subscription invoice history (per-row match) before trusting a stored stripe_invoice_id that may be latest_invoice.
+	$user_id = isset( $row['arm_user_id'] ) ? (int) $row['arm_user_id'] : 0;
+	if ( $user_id > 0 ) {
+		$user = get_userdata( $user_id );
+		if ( $user ) {
+			$stripe_match = arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, $row );
+			if ( ! is_wp_error( $stripe_match ) && ! empty( $stripe_match ) ) {
+				$from_match = arsenal_settings_resolve_arm_payment_datetime_from_stripe_match( $stripe_match, $ids['order_id'] );
+				if ( '' !== $from_match ) {
+					return $from_match;
+				}
+			}
+		}
+	}
+
+	if ( preg_match( '/^in_[a-zA-Z0-9]+$/', $ids['invoice_id'] ) ) {
+		$invoice = arsenal_settings_stripe_get_invoice( $ids['invoice_id'] );
+		if ( ! is_wp_error( $invoice ) && is_array( $invoice ) ) {
+			$pi = isset( $invoice['payment_intent'] ) && is_array( $invoice['payment_intent'] ) ? $invoice['payment_intent'] : null;
+			$ts = arsenal_settings_stripe_extract_paid_at_timestamp( $invoice, $pi );
+			if ( $ts > 0 ) {
+				return arsenal_settings_unix_to_arm_payment_datetime( $ts );
+			}
+		}
+	}
+
+	foreach ( array( $ids['charge_id'], $ids['payment_intent_id'] ) as $stripe_id ) {
+		if ( '' === $stripe_id ) {
+			continue;
+		}
+		$ts = arsenal_settings_stripe_paid_at_from_object_id( $stripe_id );
+		if ( $ts > 0 ) {
+			return arsenal_settings_unix_to_arm_payment_datetime( $ts );
+		}
+	}
+
+	return '';
+}
+
+/**
  * Resolve payment datetime for ARMember logs from Stripe match data and/or a WooCommerce order.
  *
  * @param array $stripe_match  Stripe subscription/invoice match.
@@ -4695,29 +5037,12 @@ function arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, ar
 			continue;
 		}
 
-		$invoice = arsenal_settings_stripe_subscription_latest_invoice( $full_subscription );
+		$invoice = arsenal_settings_stripe_pick_invoice_for_arm_log_row( $full_subscription, $failed_row, $customer_id );
 		if ( ! arsenal_settings_stripe_subscription_matches_failed_arm_log( $full_subscription, $invoice, $failed_row ) ) {
 			continue;
 		}
 
-		$payment_intent = isset( $invoice['payment_intent'] ) ? $invoice['payment_intent'] : null;
-		$payment_intent_id = is_array( $payment_intent ) && ! empty( $payment_intent['id'] ) ? (string) $payment_intent['id'] : '';
-		$latest_charge_id  = is_array( $payment_intent ) && ! empty( $payment_intent['latest_charge'] ) ? (string) $payment_intent['latest_charge'] : '';
-		$paid_at           = arsenal_settings_stripe_extract_paid_at_timestamp( $invoice, is_array( $payment_intent ) ? $payment_intent : null );
-
-		return array(
-			'customer_id'        => $customer_id,
-			'subscription_id'    => (string) $full_subscription['id'],
-			'subscription_status' => isset( $full_subscription['status'] ) ? (string) $full_subscription['status'] : '',
-			'current_period_end' => isset( $full_subscription['current_period_end'] ) ? (int) $full_subscription['current_period_end'] : 0,
-			'invoice_id'         => isset( $invoice['id'] ) ? (string) $invoice['id'] : '',
-			'invoice_status'     => isset( $invoice['status'] ) ? (string) $invoice['status'] : '',
-			'amount_paid'        => isset( $invoice['amount_paid'] ) ? (int) $invoice['amount_paid'] : 0,
-			'currency'           => isset( $invoice['currency'] ) ? (string) $invoice['currency'] : '',
-			'payment_intent_id'  => $payment_intent_id,
-			'latest_charge_id'   => $latest_charge_id,
-			'paid_at'            => $paid_at,
-		);
+		return arsenal_settings_stripe_build_match_from_invoice( $invoice, $full_subscription, $customer_id );
 	}
 
 	return array();
@@ -5009,29 +5334,15 @@ function arsenal_settings_backfill_repaired_arm_payment_log_dates( $days = 14 ) 
 			continue;
 		}
 
-		$wc_order_id    = isset( $extra['woocommerce_order_id'] ) ? (int) $extra['woocommerce_order_id'] : 0;
-		$payment_datetime = '';
-
-		if ( 'woocommerce_stripe_payment_log_backfill' === $source && $wc_order_id > 0 && function_exists( 'wc_get_order' ) ) {
-			$order = wc_get_order( $wc_order_id );
-			if ( $order && is_object( $order ) ) {
-				$payment_datetime = arsenal_settings_get_wc_order_payment_date( $order );
-			}
-		}
-
-		if ( '' === $payment_datetime ) {
-			$stripe_match = arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, $row );
-			if ( ! is_wp_error( $stripe_match ) && ! empty( $stripe_match ) ) {
-				$payment_datetime = arsenal_settings_resolve_arm_payment_datetime_from_stripe_match( $stripe_match, $wc_order_id );
-			}
-		}
+		$payment_datetime = arsenal_settings_resolve_arm_payment_datetime_for_log_row( $row );
 
 		if ( '' === $payment_datetime ) {
 			continue;
 		}
 
 		$current_created = isset( $row['arm_created_date'] ) ? (string) $row['arm_created_date'] : '';
-		if ( $current_created === $payment_datetime ) {
+		$current_paid    = isset( $row['arm_payment_date'] ) ? (string) $row['arm_payment_date'] : '';
+		if ( $current_created === $payment_datetime && $current_paid === $payment_datetime ) {
 			continue;
 		}
 
@@ -5040,15 +5351,37 @@ function arsenal_settings_backfill_repaired_arm_payment_log_dates( $days = 14 ) 
 			continue;
 		}
 
+		$update_row = array(
+			'arm_created_date' => $payment_datetime,
+			'arm_payment_date' => $payment_datetime,
+		);
+		$update_fmt = array( '%s', '%s' );
+
+		$stripe_match = arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, $row );
+		if ( ! is_wp_error( $stripe_match ) ) {
+			if ( ! empty( $stripe_match['invoice_id'] ) ) {
+				$extra['stripe_invoice_id']     = (string) $stripe_match['invoice_id'];
+				$extra['stripe_invoice_status'] = isset( $stripe_match['invoice_status'] ) ? (string) $stripe_match['invoice_status'] : '';
+				if ( ! empty( $stripe_match['payment_intent_id'] ) ) {
+					$extra['stripe_payment_intent_id'] = (string) $stripe_match['payment_intent_id'];
+				}
+				if ( ! empty( $stripe_match['latest_charge_id'] ) ) {
+					$extra['stripe_charge_id'] = (string) $stripe_match['latest_charge_id'];
+				}
+				if ( ! empty( $stripe_match['paid_at'] ) ) {
+					$extra['stripe_invoice_paid_at'] = (int) $stripe_match['paid_at'];
+				}
+				$update_row['arm_extra_vars'] = maybe_serialize( $extra );
+				$update_fmt[]                   = '%s';
+			}
+		}
+
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
 		$result = $wpdb->update(
 			$table,
-			array(
-				'arm_created_date' => $payment_datetime,
-				'arm_payment_date' => $payment_datetime,
-			),
+			$update_row,
 			array( 'arm_log_id' => $log_id ),
-			array( '%s', '%s' ),
+			$update_fmt,
 			array( '%d' )
 		);
 
@@ -5061,6 +5394,7 @@ function arsenal_settings_backfill_repaired_arm_payment_log_dates( $days = 14 ) 
 					'user_id'            => $user_id,
 					'arm_created_before' => $current_created,
 					'arm_created_after'  => $payment_datetime,
+					'stripe_invoice_id'  => isset( $extra['stripe_invoice_id'] ) ? (string) $extra['stripe_invoice_id'] : '',
 				)
 			);
 		}
