@@ -4617,18 +4617,26 @@ function arsenal_settings_arm_payment_log_dedupe_key( array $row ) {
  * @return int
  */
 function arsenal_settings_arm_payment_log_dedupe_keep_score( array $row ) {
-	$extra  = arsenal_settings_arm_payment_log_extra_vars_array( isset( $row['arm_extra_vars'] ) ? $row['arm_extra_vars'] : '' );
-	$score  = 0;
-	$source = isset( $extra['arsenal_source'] ) ? (string) $extra['arsenal_source'] : '';
+	$extra   = arsenal_settings_arm_payment_log_extra_vars_array( isset( $row['arm_extra_vars'] ) ? $row['arm_extra_vars'] : '' );
+	$score   = 0;
+	$source  = isset( $extra['arsenal_source'] ) ? (string) $extra['arsenal_source'] : '';
+	$user_id = isset( $row['arm_user_id'] ) ? (int) $row['arm_user_id'] : 0;
 
+	if ( $user_id > 0 ) {
+		$score += 500;
+	}
+	// Stripe-verified repair rows must outrank older "Paid By system" success stubs that share the same invoice/sub.
+	if ( 'stripe_direct_subscription_failed_log_repair' === $source ) {
+		$score += 200;
+	}
 	if ( ! empty( $extra['woocommerce_order_id'] ) ) {
 		$score += 100;
 	}
 	if ( 'woocommerce_stripe_payment_log_backfill' === $source ) {
 		$score += 50;
 	}
-	if ( 'stripe_direct_subscription_failed_log_repair' === $source ) {
-		$score += 25;
+	if ( ! empty( $extra['stripe_invoice_id'] ) && preg_match( '/^in_[a-zA-Z0-9]+$/', (string) $extra['stripe_invoice_id'] ) ) {
+		$score += 30;
 	}
 	if ( empty( $extra['manual_by'] ) ) {
 		$score += 10;

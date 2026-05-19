@@ -402,6 +402,50 @@ function arsenal_settings_dd_failures_on_rest_api_logged( array $entry, $respons
 add_action( 'arsenal_settings_rest_api_logged', 'arsenal_settings_dd_failures_on_rest_api_logged', 10, 2 );
 
 /**
+ * Whether a WordPress user pays via Stripe bank debit / direct debit.
+ *
+ * @param int $user_id WordPress user id.
+ * @return bool
+ */
+function arsenal_settings_dd_failure_user_uses_direct_debit( $user_id ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return false;
+	}
+
+	$user = get_userdata( $user_id );
+	if ( ! $user || empty( $user->user_email ) || ! function_exists( 'arsenal_settings_stripe_find_customer_id_by_email' ) ) {
+		return false;
+	}
+
+	$customer_id = arsenal_settings_stripe_find_customer_id_by_email( (string) $user->user_email );
+	if ( is_wp_error( $customer_id ) || '' === $customer_id ) {
+		return false;
+	}
+
+	foreach ( arsenal_settings_dd_failure_debit_types() as $type ) {
+		if ( function_exists( 'arsenal_settings_stripe_get_first_customer_payment_method_id' ) ) {
+			$pm_id = arsenal_settings_stripe_get_first_customer_payment_method_id( $customer_id, $type );
+			if ( '' !== $pm_id ) {
+				return true;
+			}
+		}
+	}
+
+	$default_pm = function_exists( 'arsenal_settings_stripe_get_customer_default_payment_method_id' )
+		? arsenal_settings_stripe_get_customer_default_payment_method_id( $customer_id )
+		: '';
+	if ( '' !== $default_pm && function_exists( 'arsenal_settings_stripe_api_get' ) ) {
+		$pm = arsenal_settings_stripe_api_get( 'payment_methods/' . rawurlencode( $default_pm ) );
+		if ( ! is_wp_error( $pm ) && ! empty( $pm['type'] ) ) {
+			return in_array( strtolower( (string) $pm['type'] ), arsenal_settings_dd_failure_debit_types(), true );
+		}
+	}
+
+	return false;
+}
+
+/**
  * Record cron payment failure events.
  *
  * @param string $message Event name.
@@ -424,6 +468,12 @@ function arsenal_settings_dd_failures_on_cron_log( $message, array $extra = arra
 		'payment_method_type' => '',
 		'details'             => array( 'extra' => $extra ),
 	);
+	if ( ! arsenal_settings_dd_failure_row_is_direct_debit( $probe ) && 'failed_log_repair_skip' === $message ) {
+		$user_id = isset( $extra['user_id'] ) ? (int) $extra['user_id'] : 0;
+		if ( $user_id > 0 && arsenal_settings_dd_failure_user_uses_direct_debit( $user_id ) ) {
+			$probe['payment_method_type'] = 'us_bank_account';
+		}
+	}
 	if ( ! arsenal_settings_dd_failure_row_is_direct_debit( $probe ) ) {
 		return;
 	}
