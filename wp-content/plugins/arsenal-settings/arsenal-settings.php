@@ -18,6 +18,7 @@ define( 'ARSENAL_SETTINGS_REST_NAMESPACE', 'arsenal-settings/v1' );
 
 require_once __DIR__ . '/arsenal-settings-rest-ensure-recurring-by-active-membership.php';
 require_once __DIR__ . '/arsenal-settings-woocommerce-payment-failures.php';
+require_once __DIR__ . '/arsenal-settings-payment-log-tools.php';
 
 /** User meta key: plaintext API key shown once after generation (must match saved option). */
 function arsenal_settings_pending_api_key_usermeta_key() {
@@ -6437,7 +6438,7 @@ function arsenal_settings_redirect_legacy_settings_urls() {
 		return;
 	}
 	$page = sanitize_text_field( wp_unslash( (string) $_GET['page'] ) );
-	if ( ! in_array( $page, array( 'arsenal-settings', 'arsenal-settings-stripe', 'arsenal-settings-api-logs', 'arsenal-settings-wc-dd-failures' ), true ) ) {
+	if ( ! in_array( $page, array( 'arsenal-settings', 'arsenal-settings-stripe', 'arsenal-settings-api-logs', 'arsenal-settings-wc-dd-failures', 'arsenal-settings-payment-log-tools' ), true ) ) {
 		return;
 	}
 	wp_safe_redirect( arsenal_settings_admin_page_url( $page ) );
@@ -6535,6 +6536,10 @@ function arsenal_settings_render_plugin_settings_page() {
 			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-stripe' ) ); ?>"><?php esc_html_e( 'Stripe', 'arsenal-settings' ); ?></a>
 			&middot;
 			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-api-logs' ) ); ?>"><?php esc_html_e( 'API logs', 'arsenal-settings' ); ?></a>
+			&middot;
+			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-payment-log-tools' ) ); ?>"><?php esc_html_e( 'Payment log tools', 'arsenal-settings' ); ?></a>
+			&middot;
+			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-wc-dd-failures' ) ); ?>"><?php esc_html_e( 'DD payment failures', 'arsenal-settings' ); ?></a>
 		</p>
 		<p class="description">
 			<?php esc_html_e( 'When a security key is set, all Arsenal REST routes require it on every request. Until you generate a key, behavior stays the same as before (no key required).', 'arsenal-settings' ); ?>
