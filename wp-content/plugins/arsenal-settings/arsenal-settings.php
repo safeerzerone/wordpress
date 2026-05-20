@@ -5785,6 +5785,541 @@ function arsenal_settings_arm_after_recurring_payment_success_update_next_due( $
 add_action( 'arm_after_recurring_payment_success_outside', 'arsenal_settings_arm_after_recurring_payment_success_update_next_due', 20, 5 );
 
 /**
+ * Whether an ARMember plan row is past due (ARMember uses next due + 24 hours).
+ *
+ * @param array $plan_data arm_user_plan_{id} meta.
+ * @param int   $grace_seconds Grace period after due timestamp (default 24h).
+ * @return bool
+ */
+function arsenal_settings_arm_plan_next_due_is_overdue( array $plan_data, $grace_seconds = DAY_IN_SECONDS ) {
+	$next_due = isset( $plan_data['arm_next_due_payment'] ) ? (int) $plan_data['arm_next_due_payment'] : 0;
+	if ( $next_due < 1 ) {
+		return false;
+	}
+
+	$grace_seconds = max( 0, (int) $grace_seconds );
+
+	return ( $next_due + $grace_seconds ) < (int) current_time( 'timestamp' );
+}
+
+/**
+ * Whether a member plan is paid via Stripe bank direct debit (ARMember auto-debit or WooCommerce + DD PM).
+ *
+ * @param int   $user_id   WordPress user id.
+ * @param int   $plan_id   ARMember plan id.
+ * @param array $dd_cache  Optional per-user cache (user id => bool).
+ * @return bool
+ */
+function arsenal_settings_user_plan_is_stripe_direct_debit( $user_id, $plan_id, array &$dd_cache = array() ) {
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return false;
+	}
+
+	if ( function_exists( 'arsenal_settings_user_armember_plan_is_stripe_auto_debit' )
+		&& arsenal_settings_user_armember_plan_is_stripe_auto_debit( $user_id, $plan_id ) ) {
+		return true;
+	}
+
+	if ( ! array_key_exists( $user_id, $dd_cache ) ) {
+		$dd_cache[ $user_id ] = function_exists( 'arsenal_settings_dd_failure_user_uses_direct_debit' )
+			&& arsenal_settings_dd_failure_user_uses_direct_debit( $user_id );
+	}
+
+	if ( empty( $dd_cache[ $user_id ] ) ) {
+		return false;
+	}
+
+	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	if ( ! is_array( $plan_data ) ) {
+		return false;
+	}
+
+	$gateway = isset( $plan_data['arm_user_gateway'] ) ? strtolower( trim( (string) $plan_data['arm_user_gateway'] ) ) : '';
+	$mode    = isset( $plan_data['arm_payment_mode'] ) ? (string) $plan_data['arm_payment_mode'] : '';
+
+	return in_array( $gateway, array( 'woocommerce', 'stripe' ), true )
+		|| ( 'stripe' === $gateway && 'manual_subscription' === $mode );
+}
+
+/**
+ * Build a minimal ARMember payment-log probe row for Stripe subscription matching.
+ *
+ * @param int   $user_id   WordPress user id.
+ * @param int   $plan_id   ARMember plan id.
+ * @param array $plan_data arm_user_plan_{id} meta (optional).
+ * @return array
+ */
+function arsenal_settings_arm_probe_row_from_plan( $user_id, $plan_id, array $plan_data = array() ) {
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( empty( $plan_data ) ) {
+		$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+		$plan_data = is_array( $plan_data ) ? $plan_data : array();
+	}
+
+	$amount = 0.0;
+	if ( class_exists( 'ARM_Plan' ) ) {
+		$plan = new ARM_Plan( $plan_id );
+		if ( is_object( $plan ) && isset( $plan->amount ) ) {
+			$amount = (float) $plan->amount;
+		}
+	}
+
+	$currency = ! empty( $plan_data['arm_currency'] ) ? (string) $plan_data['arm_currency'] : '';
+	if ( '' === $currency && function_exists( 'get_woocommerce_currency' ) ) {
+		$currency = (string) get_woocommerce_currency();
+	}
+
+	$due_ts = isset( $plan_data['arm_next_due_payment'] ) ? (int) $plan_data['arm_next_due_payment'] : 0;
+	$hint   = $due_ts > 0 ? arsenal_settings_unix_to_arm_payment_datetime( $due_ts ) : current_time( 'mysql' );
+
+	return array(
+		'arm_user_id'      => $user_id,
+		'arm_plan_id'      => $plan_id,
+		'arm_amount'       => $amount,
+		'arm_currency'     => $currency,
+		'arm_created_date' => $hint,
+	);
+}
+
+/**
+ * Paid WooCommerce Stripe direct-debit orders for a customer since a timestamp.
+ *
+ * @param int $user_id   WordPress user id.
+ * @param int $since_ts  Unix timestamp (UTC).
+ * @return int[] Order ids newest first.
+ */
+function arsenal_settings_find_paid_wc_stripe_dd_orders_for_user_since( $user_id, $since_ts ) {
+	$user_id  = (int) $user_id;
+	$since_ts = (int) $since_ts;
+	if ( $user_id < 1 || $since_ts < 1 || ! function_exists( 'wc_get_orders' ) || ! function_exists( 'arsenal_settings_dd_failure_order_is_direct_debit' ) ) {
+		return array();
+	}
+
+	$order_ids = wc_get_orders(
+		array(
+			'customer'       => $user_id,
+			'limit'          => 10,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+			'status'         => array( 'completed', 'processing', 'wps_renewal' ),
+			'payment_method' => 'stripe',
+			'date_created'   => '>' . gmdate( 'Y-m-d\TH:i:s', $since_ts ),
+			'return'         => 'ids',
+		)
+	);
+
+	if ( ! is_array( $order_ids ) ) {
+		return array();
+	}
+
+	$matched = array();
+	foreach ( $order_ids as $order_id ) {
+		$order_id = (int) $order_id;
+		if ( $order_id < 1 ) {
+			continue;
+		}
+		$order = wc_get_order( $order_id );
+		if ( ! $order || ! arsenal_settings_wc_stripe_order_is_paid_or_verified( $order ) ) {
+			continue;
+		}
+		if ( ! arsenal_settings_dd_failure_order_is_direct_debit( $order ) ) {
+			continue;
+		}
+		$matched[] = $order_id;
+	}
+
+	return $matched;
+}
+
+/**
+ * Insert a missing ARMember success payment log from a verified Stripe subscription payment.
+ *
+ * @param int     $user_id      WordPress user id.
+ * @param int     $plan_id      ARMember plan id.
+ * @param array   $stripe_match Match from Stripe.
+ * @param WP_User $user         WordPress user.
+ * @return int New or existing arm_log_id, or 0 on failure.
+ */
+function arsenal_settings_ensure_arm_success_log_from_stripe_match( $user_id, $plan_id, array $stripe_match, $user ) {
+	global $wpdb, $arm_payment_gateways;
+
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 || empty( $stripe_match ) || ! $user ) {
+		return 0;
+	}
+
+	$table = arsenal_settings_get_armember_payment_log_table();
+	$existing_log_id = arsenal_settings_arm_find_existing_wc_stripe_success_payment_log_id(
+		$table,
+		$user_id,
+		$plan_id,
+		0,
+		isset( $stripe_match['latest_charge_id'] ) ? (string) $stripe_match['latest_charge_id'] : '',
+		isset( $stripe_match['payment_intent_id'] ) ? (string) $stripe_match['payment_intent_id'] : '',
+		isset( $stripe_match['subscription_id'] ) ? (string) $stripe_match['subscription_id'] : '',
+		isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : ''
+	);
+	if ( $existing_log_id > 0 ) {
+		return $existing_log_id;
+	}
+
+	$plan_type = arsenal_settings_get_arm_plan_payment_type( $plan_id );
+	$currency  = ! empty( $stripe_match['currency'] ) ? strtoupper( (string) $stripe_match['currency'] ) : '';
+	if ( '' === $currency && function_exists( 'get_woocommerce_currency' ) ) {
+		$currency = (string) get_woocommerce_currency();
+	}
+
+	$amount = 0.0;
+	if ( ! empty( $stripe_match['amount_paid'] ) ) {
+		$amount = (float) $stripe_match['amount_paid'] / 100;
+	}
+	if ( $amount <= 0 && class_exists( 'ARM_Plan' ) ) {
+		$plan = new ARM_Plan( $plan_id );
+		if ( is_object( $plan ) && isset( $plan->amount ) ) {
+			$amount = (float) $plan->amount;
+		}
+	}
+
+	$payment_datetime = '';
+	if ( ! empty( $stripe_match['paid_at'] ) ) {
+		$payment_datetime = arsenal_settings_unix_to_arm_payment_datetime( (int) $stripe_match['paid_at'] );
+	}
+	if ( '' === $payment_datetime ) {
+		$payment_datetime = current_time( 'mysql' );
+	}
+
+	$transaction_id = isset( $stripe_match['latest_charge_id'] ) && '' !== (string) $stripe_match['latest_charge_id']
+		? (string) $stripe_match['latest_charge_id']
+		: ( isset( $stripe_match['payment_intent_id'] ) && '' !== (string) $stripe_match['payment_intent_id']
+			? (string) $stripe_match['payment_intent_id']
+			: ( isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : '' ) );
+
+	$extra_vars = array(
+		'arsenal_source'                 => 'overdue_direct_debit_stripe_reconcile',
+		'arsenal_synced_at'              => current_time( 'mysql' ),
+		'stripe_customer_id'             => isset( $stripe_match['customer_id'] ) ? (string) $stripe_match['customer_id'] : '',
+		'stripe_subscription_id'         => isset( $stripe_match['subscription_id'] ) ? (string) $stripe_match['subscription_id'] : '',
+		'stripe_subscription_status'     => isset( $stripe_match['subscription_status'] ) ? (string) $stripe_match['subscription_status'] : '',
+		'stripe_invoice_id'              => isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : '',
+		'stripe_invoice_status'          => isset( $stripe_match['invoice_status'] ) ? (string) $stripe_match['invoice_status'] : '',
+		'stripe_payment_intent_id'       => isset( $stripe_match['payment_intent_id'] ) ? (string) $stripe_match['payment_intent_id'] : '',
+		'stripe_charge_id'               => isset( $stripe_match['latest_charge_id'] ) ? (string) $stripe_match['latest_charge_id'] : '',
+	);
+
+	$payment_data = array(
+		'arm_user_id'                  => $user_id,
+		'arm_first_name'               => isset( $user->first_name ) ? (string) $user->first_name : '',
+		'arm_last_name'                => isset( $user->last_name ) ? (string) $user->last_name : '',
+		'arm_plan_id'                  => $plan_id,
+		'arm_payment_gateway'          => 'woocommerce',
+		'arm_payment_type'             => $plan_type,
+		'arm_token'                    => isset( $stripe_match['subscription_id'] ) ? (string) $stripe_match['subscription_id'] : '',
+		'arm_payer_email'              => isset( $user->user_email ) ? (string) $user->user_email : '',
+		'arm_receiver_email'           => '',
+		'arm_transaction_id'           => $transaction_id,
+		'arm_transaction_payment_type' => $plan_type,
+		'arm_transaction_status'       => 'success',
+		'arm_payment_mode'             => 'recurring' === $plan_type ? 'manual_subscription' : '',
+		'arm_payment_date'             => $payment_datetime,
+		'arm_amount'                   => $amount,
+		'arm_currency'                 => $currency,
+		'arm_extra_vars'               => maybe_serialize( $extra_vars ),
+		'arm_created_date'             => $payment_datetime,
+	);
+
+	$payment_log_id = 0;
+	if ( is_object( $arm_payment_gateways ) && method_exists( $arm_payment_gateways, 'arm_save_payment_log' ) ) {
+		$payment_log_id = (int) $arm_payment_gateways->arm_save_payment_log( $payment_data );
+	}
+
+	if ( $payment_log_id < 1 ) {
+		arsenal_settings_api_process_log(
+			'overdue_dd_stripe_log_insert_error',
+			array(
+				'user_id'  => $user_id,
+				'plan_id'  => $plan_id,
+				'db_error' => $wpdb->last_error,
+			)
+		);
+	}
+
+	return $payment_log_id;
+}
+
+/**
+ * Reconcile one overdue direct-debit plan: sync paid WC renewals, repair failed logs, or match Stripe.
+ *
+ * @param int  $user_id   WordPress user id.
+ * @param int  $plan_id   ARMember plan id.
+ * @param bool $cron_log  Write to wc-stripe-arm-cron log.
+ * @return array{status:string,order_id?:int,arm_log_id?:int}
+ */
+function arsenal_settings_reconcile_overdue_direct_debit_plan( $user_id, $plan_id, $cron_log = false ) {
+	global $wpdb;
+
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return array( 'status' => 'skipped_invalid' );
+	}
+
+	if ( ! function_exists( 'arsenal_settings_user_has_active_armember_plan' )
+		|| ! arsenal_settings_user_has_active_armember_plan( $user_id, $plan_id ) ) {
+		return array( 'status' => 'skipped_inactive' );
+	}
+
+	$dd_cache = array();
+	if ( ! arsenal_settings_user_plan_is_stripe_direct_debit( $user_id, $plan_id, $dd_cache ) ) {
+		return array( 'status' => 'skipped_not_direct_debit' );
+	}
+
+	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	$plan_data = is_array( $plan_data ) ? $plan_data : array();
+	if ( ! arsenal_settings_arm_plan_next_due_is_overdue( $plan_data ) ) {
+		return array( 'status' => 'skipped_not_overdue' );
+	}
+
+	$next_due = isset( $plan_data['arm_next_due_payment'] ) ? (int) $plan_data['arm_next_due_payment'] : 0;
+	$since_ts = max( 0, $next_due - DAY_IN_SECONDS );
+
+	foreach ( arsenal_settings_find_paid_wc_stripe_dd_orders_for_user_since( $user_id, $since_ts ) as $order_id ) {
+		$order = function_exists( 'wc_get_order' ) ? wc_get_order( $order_id ) : null;
+		if ( ! $order ) {
+			continue;
+		}
+		$order_plan_ids = arsenal_settings_get_arm_plan_ids_for_wc_order( $order );
+		if ( ! in_array( $plan_id, $order_plan_ids, true ) ) {
+			continue;
+		}
+		arsenal_settings_sync_wc_stripe_order_to_arm_payment_log( $order_id, $cron_log );
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log(
+				'overdue_dd_wc_order_synced',
+				array(
+					'user_id'  => $user_id,
+					'plan_id'  => $plan_id,
+					'order_id' => $order_id,
+				)
+			);
+		}
+	}
+
+	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	$plan_data = is_array( $plan_data ) ? $plan_data : array();
+	if ( ! arsenal_settings_arm_plan_next_due_is_overdue( $plan_data ) ) {
+		return array( 'status' => 'reconciled_wc' );
+	}
+
+	$table = arsenal_settings_get_armember_payment_log_table();
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+	$failed_row = $wpdb->get_row(
+		$wpdb->prepare(
+			"SELECT * FROM `{$table}` WHERE `arm_user_id` = %d AND `arm_plan_id` = %d AND `arm_payment_gateway` = %s AND `arm_transaction_status` = %s AND `arm_created_date` >= %s ORDER BY `arm_log_id` DESC LIMIT 1",
+			$user_id,
+			$plan_id,
+			'woocommerce',
+			'failed',
+			gmdate( 'Y-m-d H:i:s', strtotime( '-30 days' ) )
+		),
+		ARRAY_A
+	);
+	if ( is_array( $failed_row ) && arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( $failed_row ) ) {
+		$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+		$plan_data = is_array( $plan_data ) ? $plan_data : array();
+		if ( ! arsenal_settings_arm_plan_next_due_is_overdue( $plan_data ) ) {
+			return array(
+				'status'     => 'reconciled_failed_log',
+				'arm_log_id' => isset( $failed_row['arm_log_id'] ) ? (int) $failed_row['arm_log_id'] : 0,
+			);
+		}
+	}
+
+	$user = get_userdata( $user_id );
+	if ( ! $user ) {
+		return array( 'status' => 'skipped_no_user' );
+	}
+
+	$probe        = arsenal_settings_arm_probe_row_from_plan( $user_id, $plan_id, $plan_data );
+	$stripe_match = arsenal_settings_find_stripe_subscription_for_failed_arm_log( $user, $probe );
+	if ( is_wp_error( $stripe_match ) ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log(
+				'overdue_dd_stripe_error',
+				array(
+					'user_id' => $user_id,
+					'plan_id' => $plan_id,
+					'error'   => $stripe_match->get_error_message(),
+				)
+			);
+		}
+		return array( 'status' => 'stripe_error' );
+	}
+
+	if ( empty( $stripe_match ) ) {
+		if ( $cron_log ) {
+			arsenal_settings_wc_stripe_arm_cron_log(
+				'overdue_dd_still_unpaid',
+				array(
+					'user_id'  => $user_id,
+					'plan_id'  => $plan_id,
+					'next_due' => $next_due,
+				)
+			);
+		}
+		return array( 'status' => 'still_overdue_unpaid' );
+	}
+
+	arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id, $stripe_match );
+	$log_id = arsenal_settings_ensure_arm_success_log_from_stripe_match( $user_id, $plan_id, $stripe_match, $user );
+
+	if ( $cron_log ) {
+		arsenal_settings_wc_stripe_arm_cron_log(
+			'overdue_dd_reconciled_stripe',
+			array(
+				'user_id'      => $user_id,
+				'plan_id'      => $plan_id,
+				'arm_log_id'   => $log_id,
+				'stripe_sub'   => isset( $stripe_match['subscription_id'] ) ? (string) $stripe_match['subscription_id'] : '',
+			)
+		);
+	}
+
+	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	$plan_data = is_array( $plan_data ) ? $plan_data : array();
+	if ( ! arsenal_settings_arm_plan_next_due_is_overdue( $plan_data ) ) {
+		return array(
+			'status'     => 'reconciled_stripe',
+			'arm_log_id' => $log_id,
+		);
+	}
+
+	return array(
+		'status'     => 'reconciled_stripe_due_stale',
+		'arm_log_id' => $log_id,
+	);
+}
+
+/**
+ * Cron batch: scan active, non-suspended members with overdue direct-debit plans and reconcile payments.
+ *
+ * @param int $batch_size Users to scan per run.
+ * @return array Summary counters.
+ */
+function arsenal_settings_cron_reconcile_overdue_direct_debit_plans( $batch_size = 25 ) {
+	$batch_size = max( 5, min( 100, (int) $batch_size ) );
+	$offset     = (int) get_option( 'arsenal_settings_dd_overdue_cron_offset', 0 );
+
+	$users = get_users(
+		array(
+			'meta_key'     => 'arm_user_plan_ids',
+			'meta_compare' => 'EXISTS',
+			'number'       => $batch_size,
+			'offset'       => $offset,
+			'orderby'      => 'ID',
+			'order'        => 'ASC',
+			'fields'       => array( 'ID' ),
+		)
+	);
+
+	$summary = array(
+		'users_scanned'        => 0,
+		'plans_checked'        => 0,
+		'reconciled_wc'        => 0,
+		'reconciled_failed'    => 0,
+		'reconciled_stripe'    => 0,
+		'still_overdue_unpaid' => 0,
+		'skipped'              => 0,
+	);
+
+	if ( empty( $users ) ) {
+		update_option( 'arsenal_settings_dd_overdue_cron_offset', 0, false );
+		return $summary;
+	}
+
+	arsenal_settings_wc_stripe_arm_cron_log(
+		'overdue_dd_cron_start',
+		array(
+			'offset'     => $offset,
+			'batch_size' => $batch_size,
+			'user_count' => count( $users ),
+		)
+	);
+
+	foreach ( $users as $user ) {
+		$user_id = isset( $user->ID ) ? (int) $user->ID : 0;
+		if ( $user_id < 1 ) {
+			continue;
+		}
+		$summary['users_scanned']++;
+
+		$plan_ids = get_user_meta( $user_id, 'arm_user_plan_ids', true );
+		$plan_ids = is_array( $plan_ids ) ? array_map( 'intval', $plan_ids ) : array();
+		foreach ( $plan_ids as $plan_id ) {
+			if ( $plan_id < 1 ) {
+				continue;
+			}
+
+			if ( class_exists( 'ARM_Plan' ) ) {
+				$plan = new ARM_Plan( $plan_id );
+				if ( is_object( $plan ) && method_exists( $plan, 'is_recurring' ) && ! $plan->is_recurring() ) {
+					continue;
+				}
+			}
+
+			$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+			$plan_data = is_array( $plan_data ) ? $plan_data : array();
+			if ( ! arsenal_settings_arm_plan_next_due_is_overdue( $plan_data ) ) {
+				continue;
+			}
+
+			$summary['plans_checked']++;
+			$result = arsenal_settings_reconcile_overdue_direct_debit_plan( $user_id, $plan_id, true );
+			$status = isset( $result['status'] ) ? (string) $result['status'] : '';
+
+			switch ( $status ) {
+				case 'reconciled_wc':
+					$summary['reconciled_wc']++;
+					break;
+				case 'reconciled_failed_log':
+					$summary['reconciled_failed']++;
+					break;
+				case 'reconciled_stripe':
+				case 'reconciled_stripe_due_stale':
+					$summary['reconciled_stripe']++;
+					break;
+				case 'still_overdue_unpaid':
+					$summary['still_overdue_unpaid']++;
+					break;
+				default:
+					$summary['skipped']++;
+			}
+
+			arsenal_settings_wc_stripe_arm_cron_log(
+				'overdue_dd_member_checked',
+				array(
+					'user_id' => $user_id,
+					'plan_id' => $plan_id,
+					'status'  => $status,
+				)
+			);
+		}
+	}
+
+	update_option( 'arsenal_settings_dd_overdue_cron_offset', $offset + count( $users ), false );
+
+	arsenal_settings_wc_stripe_arm_cron_log(
+		'overdue_dd_cron_complete',
+		$summary
+	);
+
+	return $summary;
+}
+
+/**
  * Register a 2-hour cron interval for WooCommerce Stripe renewal backfill.
  *
  * @param array $schedules Existing WP-Cron schedules.
@@ -5910,6 +6445,7 @@ function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
 
 	$payment_dates_backfilled = arsenal_settings_backfill_repaired_arm_payment_log_dates( 14 );
 	$duplicates_removed       = arsenal_settings_arm_dedupe_duplicate_wc_success_payment_logs( 30 );
+	$overdue_dd_summary       = arsenal_settings_cron_reconcile_overdue_direct_debit_plans( 25 );
 
 	arsenal_settings_wc_stripe_arm_cron_log(
 		'cron_complete',
@@ -5920,6 +6456,7 @@ function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
 			'failed_logs_repaired'       => $repaired_failed_logs,
 			'payment_dates_backfilled'   => $payment_dates_backfilled,
 			'duplicate_logs_removed'     => $duplicates_removed,
+			'overdue_dd'                 => $overdue_dd_summary,
 			'duration_ms'                => (int) round( 1000 * ( microtime( true ) - $started ) ),
 		)
 	);
