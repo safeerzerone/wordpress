@@ -18,6 +18,7 @@ define( 'ARSENAL_SETTINGS_REST_NAMESPACE', 'arsenal-settings/v1' );
 
 require_once __DIR__ . '/arsenal-settings-rest-ensure-recurring-by-active-membership.php';
 require_once __DIR__ . '/arsenal-settings-woocommerce-payment-failures.php';
+require_once __DIR__ . '/arsenal-settings-wc-dd-overdue-cron.php';
 
 /** User meta key: plaintext API key shown once after generation (must match saved option). */
 function arsenal_settings_pending_api_key_usermeta_key() {
@@ -2226,7 +2227,7 @@ function arsenal_settings_api_process_log( $message, array $extra = array() ) {
  * @return string Regex without delimiters.
  */
 function arsenal_settings_allowed_log_file_pattern() {
-	return '^(api|wc-stripe-arm-cron|wc-dd-payment-failures)-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$';
+	return '^(api|wc-stripe-arm-cron|wc-dd-payment-failures|wc-dd-overdue-cron)-[0-9]{4}-[0-9]{2}-[0-9]{2}\.log$';
 }
 
 /**
@@ -5999,7 +6000,13 @@ function arsenal_settings_ensure_arm_success_log_from_stripe_match( $user_id, $p
 			: ( isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : '' ) );
 
 	$extra_vars = array(
-		'arsenal_source'                 => 'overdue_direct_debit_stripe_reconcile',
+		'arsenal_source'                 => (string) apply_filters(
+			'arsenal_settings_arm_success_log_extra_source',
+			'overdue_direct_debit_stripe_reconcile',
+			$user_id,
+			$plan_id,
+			$stripe_match
+		),
 		'arsenal_synced_at'              => current_time( 'mysql' ),
 		'stripe_customer_id'             => isset( $stripe_match['customer_id'] ) ? (string) $stripe_match['customer_id'] : '',
 		'stripe_subscription_id'         => isset( $stripe_match['subscription_id'] ) ? (string) $stripe_match['subscription_id'] : '',
@@ -6445,7 +6452,6 @@ function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
 
 	$payment_dates_backfilled = arsenal_settings_backfill_repaired_arm_payment_log_dates( 14 );
 	$duplicates_removed       = arsenal_settings_arm_dedupe_duplicate_wc_success_payment_logs( 30 );
-	$overdue_dd_summary       = arsenal_settings_cron_reconcile_overdue_direct_debit_plans( 25 );
 
 	arsenal_settings_wc_stripe_arm_cron_log(
 		'cron_complete',
@@ -6456,7 +6462,6 @@ function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
 			'failed_logs_repaired'       => $repaired_failed_logs,
 			'payment_dates_backfilled'   => $payment_dates_backfilled,
 			'duplicate_logs_removed'     => $duplicates_removed,
-			'overdue_dd'                 => $overdue_dd_summary,
 			'duration_ms'                => (int) round( 1000 * ( microtime( true ) - $started ) ),
 		)
 	);
@@ -7311,12 +7316,14 @@ function arsenal_settings_render_api_logs_page() {
 	$files   = array();
 	if ( $dir !== '' && is_dir( $dir ) ) {
 		$api_glob  = glob( $dir . 'api-*.log' );
-		$cron_glob = glob( $dir . 'wc-stripe-arm-cron-*.log' );
-		$dd_glob   = glob( $dir . 'wc-dd-payment-failures-*.log' );
-		$files     = array_merge(
+		$cron_glob    = glob( $dir . 'wc-stripe-arm-cron-*.log' );
+		$dd_glob      = glob( $dir . 'wc-dd-payment-failures-*.log' );
+		$overdue_glob = glob( $dir . 'wc-dd-overdue-cron-*.log' );
+		$files        = array_merge(
 			is_array( $api_glob ) ? $api_glob : array(),
 			is_array( $cron_glob ) ? $cron_glob : array(),
-			is_array( $dd_glob ) ? $dd_glob : array()
+			is_array( $dd_glob ) ? $dd_glob : array(),
+			is_array( $overdue_glob ) ? $overdue_glob : array()
 		);
 		if ( array() !== $files ) {
 			usort(
@@ -7349,7 +7356,7 @@ function arsenal_settings_render_api_logs_page() {
 			<a href="<?php echo esc_url( arsenal_settings_admin_page_url( 'arsenal-settings-stripe' ) ); ?>"><?php esc_html_e( 'Stripe', 'arsenal-settings' ); ?></a>
 		</p>
 		<p class="description">
-			<?php esc_html_e( 'NDJSON logs for Arsenal REST routes (api-YYYY-MM-DD.log), the WooCommerce Stripe ARMember sync cron (wc-stripe-arm-cron-YYYY-MM-DD.log), and direct debit payment failures (wc-dd-payment-failures-YYYY-MM-DD.log). Sensitive fields are redacted. Logs are stored under uploads in a directory not meant for public access.', 'arsenal-settings' ); ?>
+			<?php esc_html_e( 'NDJSON logs for Arsenal REST routes (api-YYYY-MM-DD.log), the WooCommerce Stripe ARMember sync cron (wc-stripe-arm-cron-YYYY-MM-DD.log), the 10-minute WooCommerce direct-debit overdue reconcile cron (wc-dd-overdue-cron-YYYY-MM-DD.log), and direct debit payment failures (wc-dd-payment-failures-YYYY-MM-DD.log). Sensitive fields are redacted. Logs are stored under uploads in a directory not meant for public access.', 'arsenal-settings' ); ?>
 		</p>
 		<?php if ( is_wp_error( $dir_res ) ) : ?>
 			<div class="notice notice-error"><p><?php echo esc_html( $dir_res->get_error_message() ); ?></p></div>
