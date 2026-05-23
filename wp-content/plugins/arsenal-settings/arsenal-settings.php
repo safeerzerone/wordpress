@@ -19,6 +19,7 @@ define( 'ARSENAL_SETTINGS_REST_NAMESPACE', 'arsenal-settings/v1' );
 require_once __DIR__ . '/arsenal-settings-rest-ensure-recurring-by-active-membership.php';
 require_once __DIR__ . '/arsenal-settings-woocommerce-payment-failures.php';
 require_once __DIR__ . '/arsenal-settings-wc-dd-overdue-cron.php';
+require_once __DIR__ . '/arsenal-settings-current-arsenal-subscription-meta.php';
 
 /** User meta key: plaintext API key shown once after generation (must match saved option). */
 function arsenal_settings_pending_api_key_usermeta_key() {
