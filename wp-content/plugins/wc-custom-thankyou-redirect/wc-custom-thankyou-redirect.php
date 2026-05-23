@@ -326,4 +326,71 @@ function wc_custom_thankyou_on_arm_after_cancel_subscription( $user_id, $plan_ob
     if ( ! in_array( (int) WC_CUSTOM_THANKYOU_RECURRING_PLAN_ID, $remaining, true ) && wc_custom_thankyou_user_qualifies_for_remove_recurring_flag( $user_id ) ) {
         update_user_meta( $user_id, 'remove_recurring_subscription', true );
     }
+
+    wc_custom_thankyou_sync_subscription_plan_user_meta( $user_id );
+}
+
+/**
+ * Build subscription_plan user meta from active ARMember plan IDs (CRM-facing labels).
+ *
+ * @param int $user_id User ID.
+ * @return void
+ */
+function wc_custom_thankyou_sync_subscription_plan_user_meta( $user_id ) {
+    $user_id = (int) $user_id;
+    if ( $user_id <= 0 ) {
+        return;
+    }
+
+    $plan_ids    = wc_custom_thankyou_normalize_arm_plan_ids( get_user_meta( $user_id, 'arm_user_plan_ids', true ) );
+    $id_to_label = wc_wpf_armember_plan_maps()['id_to_label'];
+    $labels      = array();
+
+    foreach ( $plan_ids as $plan_id ) {
+        if ( isset( $id_to_label[ $plan_id ] ) ) {
+            $labels[] = $id_to_label[ $plan_id ];
+            continue;
+        }
+
+        global $arm_subscription_plans;
+        if ( is_object( $arm_subscription_plans ) && method_exists( $arm_subscription_plans, 'arm_get_plan_name_by_id' ) ) {
+            $name = $arm_subscription_plans->arm_get_plan_name_by_id( $plan_id );
+            if ( is_string( $name ) && $name !== '' ) {
+                $labels[] = $name;
+            }
+        }
+    }
+
+    $labels = array_values( array_unique( array_filter( $labels ) ) );
+
+    if ( empty( $labels ) ) {
+        update_user_meta( $user_id, 'subscription_plan', '' );
+        return;
+    }
+
+    update_user_meta( $user_id, 'subscription_plan', implode( ', ', $labels ) );
+}
+
+/**
+ * Keep subscription_plan in sync when ARMember updates active plan IDs.
+ */
+add_action( 'updated_user_meta', 'wc_custom_thankyou_sync_subscription_plan_on_plan_ids_updated', 20, 4 );
+
+function wc_custom_thankyou_sync_subscription_plan_on_plan_ids_updated( $meta_id, $user_id, $meta_key, $meta_value ) {
+    if ( 'arm_user_plan_ids' !== $meta_key ) {
+        return;
+    }
+    wc_custom_thankyou_sync_subscription_plan_user_meta( (int) $user_id );
+}
+
+/**
+ * Last plan removed: ARMember deletes arm_user_plan_ids instead of updating to [].
+ */
+add_action( 'deleted_user_meta', 'wc_custom_thankyou_sync_subscription_plan_on_plan_ids_deleted', 20, 4 );
+
+function wc_custom_thankyou_sync_subscription_plan_on_plan_ids_deleted( $meta_ids, $user_id, $meta_key, $meta_value ) {
+    if ( 'arm_user_plan_ids' !== $meta_key ) {
+        return;
+    }
+    wc_custom_thankyou_sync_subscription_plan_user_meta( (int) $user_id );
 }
