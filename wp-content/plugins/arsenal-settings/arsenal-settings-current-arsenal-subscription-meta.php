@@ -19,6 +19,15 @@ function arsenal_settings_current_arsenal_subscription_meta_key() {
 }
 
 /**
+ * Label stored when the member has no active ARMember plan.
+ *
+ * @return string
+ */
+function arsenal_settings_no_active_plan_label() {
+	return 'No active plan';
+}
+
+/**
  * Active ARMember plan IDs for a user (not suspended, cancelled, or expired).
  *
  * @param int $user_id WordPress user ID.
@@ -83,7 +92,7 @@ function arsenal_settings_resolve_current_arsenal_subscription_title( $user_id, 
 
 	$active_plan_ids = arsenal_settings_get_user_active_armember_plan_ids( $user_id );
 	if ( empty( $active_plan_ids ) ) {
-		return '';
+		return arsenal_settings_no_active_plan_label();
 	}
 
 	$plan_id = 0;
@@ -99,7 +108,8 @@ function arsenal_settings_resolve_current_arsenal_subscription_title( $user_id, 
 	}
 
 	$name = $arm_subscription_plans->arm_get_plan_name_by_id( $plan_id );
-	return is_string( $name ) ? trim( $name ) : '';
+	$name = is_string( $name ) ? trim( $name ) : '';
+	return $name !== '' ? $name : arsenal_settings_no_active_plan_label();
 }
 
 /**
