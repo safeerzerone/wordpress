@@ -3,7 +3,59 @@
 
 	var config = window.arsenalSettingsWcStripeDdCheckout || {};
 	var paymentMethodIds = config.paymentMethodIds || [ 'stripe_bacs_debit' ];
-	var sessionEmail = $.trim( config.customerEmail || '' );
+	var billingData = config.billingData || {};
+	var fieldDefaults = config.fieldDefaults || {
+		billing_first_name: 'Customer',
+		billing_last_name: 'Member',
+		billing_address_1: 'N/A',
+		billing_address_2: 'N/A',
+		billing_city: 'N/A',
+		billing_state: 'N/A',
+		billing_postcode: '000000',
+		billing_phone: '0000000000',
+	};
+
+	function resolveBillingValue( name, value ) {
+		value = value == null ? '' : String( value ).trim();
+		if ( value ) {
+			return value;
+		}
+		if ( Object.prototype.hasOwnProperty.call( fieldDefaults, name ) && fieldDefaults[ name ] ) {
+			return String( fieldDefaults[ name ] ).trim();
+		}
+		return '';
+	}
+
+	function syncBillingFieldsToCheckout() {
+		var $form = getCheckoutForm();
+		if ( ! $form.length ) {
+			return;
+		}
+
+		var fieldsToSync = $.extend( {}, fieldDefaults, billingData );
+
+		$.each( fieldsToSync, function ( name ) {
+			var value = resolveBillingValue( name, billingData[ name ] );
+			if ( ! value ) {
+				return;
+			}
+
+			var $field = $form.find( '[name="' + name + '"]' ).first();
+			if ( ! $field.length ) {
+				$field = $( '<input type="hidden" />' )
+					.attr( 'name', name )
+					.appendTo( $form );
+			}
+
+			if ( name.indexOf( 'billing_' ) === 0 ) {
+				$field.attr( 'id', name );
+			}
+
+			if ( ! $.trim( $field.val() ) ) {
+				$field.val( value );
+			}
+		} );
+	}
 
 	function getCheckoutForm() {
 		return $( 'form.checkout' ).first();
@@ -17,65 +69,49 @@
 		return paymentMethodIds.indexOf( getSelectedPaymentMethod() ) !== -1;
 	}
 
-	/**
-	 * WooCommerce Stripe UPE reads #billing_email when creating the payment method.
-	 */
-	function ensureStripeBillingEmailField() {
-		var email = sessionEmail;
-		var $form = getCheckoutForm();
+	function hasRequiredBillingForDirectDebit() {
+		var email = resolveBillingValue( 'billing_email', billingData.billing_email || $( '#billing_email' ).val() );
+		var country = resolveBillingValue( 'billing_country', billingData.billing_country || $( '#billing_country' ).val() );
 
-		if ( ! email || ! $form.length ) {
-			return email;
-		}
-
-		var $emailField = $form.find( '#billing_email, input[name="billing_email"]' ).first();
-		if ( $emailField.length ) {
-			$emailField.attr( 'id', 'billing_email' );
-			if ( ! $.trim( $emailField.val() ) ) {
-				$emailField.val( email );
-			}
-			return $.trim( $emailField.val() );
-		}
-
-		$( '<input type="hidden" id="billing_email" name="billing_email" autocomplete="email" />' )
-			.val( email )
-			.appendTo( $form );
-
-		return email;
+		return email !== '' && country !== '';
 	}
 
-	function validateCustomerEmail() {
+	function validateDirectDebitBilling() {
 		if ( ! isDirectDebitSelected() ) {
 			return true;
 		}
-		return !!ensureStripeBillingEmailField();
-	}
 
-	function syncSessionEmailToCheckout() {
-		if ( sessionEmail ) {
-			ensureStripeBillingEmailField();
+		syncBillingFieldsToCheckout();
+
+		if ( hasRequiredBillingForDirectDebit() ) {
+			return true;
 		}
+
+		if ( ! resolveBillingValue( 'billing_email', billingData.billing_email ) && config.emailRequiredMsg ) {
+			window.alert( config.emailRequiredMsg );
+			return false;
+		}
+
+		if ( config.addressRequiredMsg ) {
+			window.alert( config.addressRequiredMsg );
+		}
+
+		return false;
 	}
 
-	syncSessionEmailToCheckout();
+	syncBillingFieldsToCheckout();
 
-	$( document.body ).on( 'updated_checkout payment_method_selected', syncSessionEmailToCheckout );
+	$( document.body ).on( 'updated_checkout payment_method_selected', syncBillingFieldsToCheckout );
 
 	$.each( paymentMethodIds, function ( _, paymentMethodId ) {
 		$( document.body ).on( 'checkout_place_order_' + paymentMethodId, function () {
-			if ( ! validateCustomerEmail() ) {
-				if ( config.emailRequiredMsg ) {
-					window.alert( config.emailRequiredMsg );
-				}
-				return false;
-			}
-			return true;
+			return validateDirectDebitBilling();
 		} );
 	} );
 
 	getCheckoutForm().on( 'checkout_place_order', function () {
 		if ( isDirectDebitSelected() ) {
-			syncSessionEmailToCheckout();
+			syncBillingFieldsToCheckout();
 		}
 	} );
 }( jQuery ) );

@@ -1,6 +1,6 @@
 <?php
 /**
- * WooCommerce checkout: Stripe direct debit — hide email in Payment Element; use logged-in customer email.
+ * WooCommerce checkout: Stripe direct debit — hide email/address in Payment Element; use session data.
  *
  * @package Arsenal_Settings
  */
@@ -28,7 +28,31 @@ function arsenal_settings_wc_stripe_dd_checkout_payment_method_ids() {
 }
 
 /**
- * Whether the post-registration checkout email hide logic should run.
+ * Billing field keys kept in the checkout DOM (hidden) for Stripe UPE.
+ *
+ * @return string[]
+ */
+function arsenal_settings_wc_stripe_dd_checkout_hidden_field_keys() {
+	return apply_filters(
+		'arsenal_settings_wc_stripe_dd_checkout_hidden_field_keys',
+		array(
+			'billing_first_name',
+			'billing_last_name',
+			'billing_company',
+			'billing_country',
+			'billing_address_1',
+			'billing_address_2',
+			'billing_city',
+			'billing_state',
+			'billing_postcode',
+			'billing_phone',
+			'billing_email',
+		)
+	);
+}
+
+/**
+ * Whether the post-registration checkout hide logic should run.
  *
  * @return bool
  */
@@ -41,27 +65,130 @@ function arsenal_settings_wc_stripe_dd_checkout_should_apply() {
 }
 
 /**
- * Billing email for the current checkout customer (WooCommerce session / logged-in user).
+ * Fallback values when registration did not store billing fields Stripe still requires.
  *
- * @return string Sanitized email or empty when unavailable.
+ * @return array<string, string>
  */
-function arsenal_settings_wc_stripe_dd_checkout_customer_email() {
-	$email = '';
+function arsenal_settings_wc_stripe_dd_checkout_field_defaults() {
+	return (array) apply_filters(
+		'arsenal_settings_wc_stripe_dd_checkout_field_defaults',
+		array(
+			'billing_first_name' => 'Customer',
+			'billing_last_name'  => 'Member',
+			'billing_address_1'  => 'N/A',
+			'billing_address_2'  => 'N/A',
+			'billing_city'       => 'N/A',
+			'billing_state'      => 'N/A',
+			'billing_postcode'   => '000000',
+			'billing_phone'      => '0000000000',
+		)
+	);
+}
 
-	if ( function_exists( 'WC' ) && WC()->customer ) {
-		$email = sanitize_email( (string) WC()->customer->get_billing_email() );
-	}
+/**
+ * Fallback postcode when registration did not store billing_postcode (Stripe requires a value).
+ *
+ * @return string
+ */
+function arsenal_settings_wc_stripe_dd_checkout_default_postcode() {
+	$defaults = arsenal_settings_wc_stripe_dd_checkout_field_defaults();
 
-	if ( $email === '' && is_user_logged_in() ) {
-		$user_id = get_current_user_id();
-		$email   = sanitize_email( (string) get_user_meta( $user_id, 'billing_email', true ) );
-		if ( $email === '' ) {
-			$user  = wp_get_current_user();
-			$email = sanitize_email( (string) $user->user_email );
+	return (string) apply_filters(
+		'arsenal_settings_wc_stripe_dd_checkout_default_postcode',
+		isset( $defaults['billing_postcode'] ) ? (string) $defaults['billing_postcode'] : '000000'
+	);
+}
+
+/**
+ * Apply Stripe-safe placeholder values for empty hidden billing fields.
+ *
+ * @param array<string, string> $data Billing field values.
+ * @return array<string, string>
+ */
+function arsenal_settings_wc_stripe_dd_checkout_apply_field_defaults( array $data ) {
+	$defaults = arsenal_settings_wc_stripe_dd_checkout_field_defaults();
+
+	if (
+		is_user_logged_in()
+		&& trim( (string) ( $data['billing_first_name'] ?? '' ) ) === ''
+		&& trim( (string) ( $data['billing_last_name'] ?? '' ) ) === ''
+	) {
+		$user  = wp_get_current_user();
+		$parts = preg_split( '/\s+/', trim( (string) $user->display_name ), 2 );
+		if ( ! empty( $parts[0] ) ) {
+			$data['billing_first_name'] = (string) $parts[0];
+		}
+		if ( ! empty( $parts[1] ) ) {
+			$data['billing_last_name'] = (string) $parts[1];
 		}
 	}
 
-	return (string) apply_filters( 'arsenal_settings_wc_stripe_dd_checkout_customer_email', $email );
+	foreach ( $defaults as $key => $default ) {
+		$default = trim( (string) $default );
+		if ( $default === '' ) {
+			continue;
+		}
+		if ( trim( (string) ( $data[ $key ] ?? '' ) ) === '' ) {
+			$data[ $key ] = $default;
+		}
+	}
+
+	return $data;
+}
+
+/**
+ * Read one billing value from WC customer session or user meta.
+ *
+ * @param string $meta_key WooCommerce billing meta key (e.g. billing_country).
+ * @return string
+ */
+function arsenal_settings_wc_stripe_dd_checkout_get_billing_value( $meta_key ) {
+	$meta_key = (string) $meta_key;
+	$value    = '';
+
+	if ( function_exists( 'WC' ) && WC()->customer ) {
+		$getter = 'get_' . $meta_key;
+		if ( is_callable( array( WC()->customer, $getter ) ) ) {
+			$value = (string) call_user_func( array( WC()->customer, $getter ) );
+		}
+	}
+
+	if ( $value === '' && is_user_logged_in() ) {
+		$value = (string) get_user_meta( get_current_user_id(), $meta_key, true );
+	}
+
+	if ( $value === '' && 'billing_email' === $meta_key && is_user_logged_in() ) {
+		$user  = wp_get_current_user();
+		$value = sanitize_email( (string) $user->user_email );
+	}
+
+	return (string) apply_filters( 'arsenal_settings_wc_stripe_dd_checkout_billing_value', $value, $meta_key );
+}
+
+/**
+ * Billing details collected earlier (registration / ARMember) for the logged-in customer.
+ *
+ * @return array<string, string>
+ */
+function arsenal_settings_wc_stripe_dd_checkout_billing_data() {
+	$data = array();
+
+	foreach ( arsenal_settings_wc_stripe_dd_checkout_hidden_field_keys() as $key ) {
+		$data[ $key ] = arsenal_settings_wc_stripe_dd_checkout_get_billing_value( $key );
+	}
+
+	$data = arsenal_settings_wc_stripe_dd_checkout_apply_field_defaults( $data );
+
+	return (array) apply_filters( 'arsenal_settings_wc_stripe_dd_checkout_billing_data', $data );
+}
+
+/**
+ * Billing email for the current checkout customer.
+ *
+ * @return string
+ */
+function arsenal_settings_wc_stripe_dd_checkout_customer_email() {
+	return arsenal_settings_wc_stripe_dd_checkout_get_billing_value( 'billing_email' );
 }
 
 /**
@@ -70,124 +197,197 @@ function arsenal_settings_wc_stripe_dd_checkout_customer_email() {
  * @return string
  */
 function arsenal_settings_wc_stripe_dd_checkout_customer_name() {
-	$name = '';
+	$first = arsenal_settings_wc_stripe_dd_checkout_get_billing_value( 'billing_first_name' );
+	$last  = arsenal_settings_wc_stripe_dd_checkout_get_billing_value( 'billing_last_name' );
 
-	if ( function_exists( 'WC' ) && WC()->customer ) {
-		$name = trim( (string) WC()->customer->get_billing_first_name() . ' ' . (string) WC()->customer->get_billing_last_name() );
-	}
-
-	if ( $name === '' && is_user_logged_in() ) {
-		$user_id = get_current_user_id();
-		$name    = trim(
-			(string) get_user_meta( $user_id, 'billing_first_name', true ) . ' ' .
-			(string) get_user_meta( $user_id, 'billing_last_name', true )
-		);
-	}
-
-	return (string) apply_filters( 'arsenal_settings_wc_stripe_dd_checkout_customer_name', $name );
+	return trim( $first . ' ' . $last );
 }
 
 /**
- * After ARMember registration, copy the logged-in user's email into the WooCommerce customer session.
+ * Stripe customerBillingData shape for wc_stripe_upe_params.
+ *
+ * @return array<string, mixed>
+ */
+function arsenal_settings_wc_stripe_dd_checkout_customer_billing_data() {
+	$data  = arsenal_settings_wc_stripe_dd_checkout_billing_data();
+	$email = isset( $data['billing_email'] ) ? sanitize_email( $data['billing_email'] ) : '';
+
+	$payload = array(
+		'name'  => trim( (string) ( $data['billing_first_name'] ?? '' ) . ' ' . (string) ( $data['billing_last_name'] ?? '' ) ),
+		'email' => $email,
+		'phone' => isset( $data['billing_phone'] ) ? (string) $data['billing_phone'] : '',
+		'address' => array(
+			'country'     => isset( $data['billing_country'] ) ? (string) $data['billing_country'] : '',
+			'line1'       => isset( $data['billing_address_1'] ) ? (string) $data['billing_address_1'] : '',
+			'line2'       => isset( $data['billing_address_2'] ) ? (string) $data['billing_address_2'] : '',
+			'city'        => isset( $data['billing_city'] ) ? (string) $data['billing_city'] : '',
+			'state'       => isset( $data['billing_state'] ) ? (string) $data['billing_state'] : '',
+			'postal_code' => isset( $data['billing_postcode'] ) ? (string) $data['billing_postcode'] : '',
+		),
+	);
+
+	return (array) apply_filters( 'arsenal_settings_wc_stripe_dd_checkout_customer_billing_data', $payload, $data );
+}
+
+/**
+ * Copy known billing values into the WooCommerce customer session on checkout.
  */
 function arsenal_settings_wc_stripe_dd_checkout_sync_customer_session() {
 	if ( ! function_exists( 'is_checkout' ) || ! is_checkout() || ! is_user_logged_in() || ! function_exists( 'WC' ) || ! WC()->customer ) {
 		return;
 	}
 
-	$email = arsenal_settings_wc_stripe_dd_checkout_customer_email();
-	if ( $email === '' ) {
-		return;
-	}
+	$billing = arsenal_settings_wc_stripe_dd_checkout_billing_data();
+	$changed = false;
 
-	if ( WC()->customer->get_billing_email() !== $email ) {
-		WC()->customer->set_billing_email( $email );
-	}
-
-	$name = arsenal_settings_wc_stripe_dd_checkout_customer_name();
-	if ( $name !== '' ) {
-		$parts = preg_split( '/\s+/', $name, 2 );
-		if ( WC()->customer->get_billing_first_name() === '' && ! empty( $parts[0] ) ) {
-			WC()->customer->set_billing_first_name( $parts[0] );
+	foreach ( $billing as $key => $value ) {
+		$value = is_string( $value ) ? $value : '';
+		if ( $value === '' ) {
+			continue;
 		}
-		if ( WC()->customer->get_billing_last_name() === '' && ! empty( $parts[1] ) ) {
-			WC()->customer->set_billing_last_name( $parts[1] );
+
+		$setter = 'set_' . $key;
+		$getter = 'get_' . $key;
+		if ( ! is_callable( array( WC()->customer, $setter ) ) || ! is_callable( array( WC()->customer, $getter ) ) ) {
+			continue;
+		}
+
+		if ( (string) call_user_func( array( WC()->customer, $getter ) ) !== $value ) {
+			call_user_func( array( WC()->customer, $setter ), $value );
+			$changed = true;
 		}
 	}
 
-	WC()->customer->save();
+	if ( $changed ) {
+		WC()->customer->save();
+	}
 }
 add_action( 'woocommerce_checkout_init', 'arsenal_settings_wc_stripe_dd_checkout_sync_customer_session', 5 );
 add_action( 'template_redirect', 'arsenal_settings_wc_stripe_dd_checkout_sync_customer_session', 5 );
 
 /**
- * Keep billing_email in the checkout DOM (hidden) so Stripe UPE treats it as collected on the WC form.
+ * Hidden billing fields on checkout so Stripe UPE treats them as collected on the WC form.
  *
  * @param array<string, array<string, mixed>> $fields Checkout fields.
  * @return array<string, array<string, mixed>>
  */
-function arsenal_settings_wc_stripe_dd_checkout_billing_email_field( $fields ) {
+function arsenal_settings_wc_stripe_dd_checkout_hidden_billing_fields( $fields ) {
 	if ( ! function_exists( 'is_checkout' ) || ! is_checkout() || is_order_received_page() || ! arsenal_settings_wc_stripe_dd_checkout_should_apply() ) {
 		return $fields;
 	}
 
-	$email = arsenal_settings_wc_stripe_dd_checkout_customer_email();
+	$billing = arsenal_settings_wc_stripe_dd_checkout_billing_data();
 
 	if ( ! isset( $fields['billing'] ) || ! is_array( $fields['billing'] ) ) {
 		$fields['billing'] = array();
 	}
 
-	$fields['billing']['billing_email'] = array(
-		'type'              => 'hidden',
-		'label'             => __( 'Email address', 'woocommerce' ),
-		'required'          => true,
-		'class'             => array(),
-		'validate'          => array( 'email' ),
-		'autocomplete'      => 'email',
-		'priority'          => 110,
-		'default'           => $email,
-		'custom_attributes' => array(
-			'readonly' => 'readonly',
+	$hidden_defaults = array(
+		'billing_first_name' => array(
+			'label'        => __( 'First name', 'woocommerce' ),
+			'autocomplete' => 'given-name',
+			'priority'     => 10,
+		),
+		'billing_last_name'  => array(
+			'label'        => __( 'Last name', 'woocommerce' ),
+			'autocomplete' => 'family-name',
+			'priority'     => 20,
+		),
+		'billing_company'    => array(
+			'label'    => __( 'Company name', 'woocommerce' ),
+			'priority' => 30,
+		),
+		'billing_country'    => array(
+			'label'    => __( 'Country / Region', 'woocommerce' ),
+			'type'     => 'country',
+			'priority' => 40,
+		),
+		'billing_address_1'  => array(
+			'label'        => __( 'Street address', 'woocommerce' ),
+			'autocomplete' => 'address-line1',
+			'priority'     => 50,
+		),
+		'billing_address_2'  => array(
+			'label'        => __( 'Apartment, suite, unit, etc.', 'woocommerce' ),
+			'autocomplete' => 'address-line2',
+			'priority'     => 60,
+		),
+		'billing_city'       => array(
+			'label'        => __( 'Town / City', 'woocommerce' ),
+			'autocomplete' => 'address-level2',
+			'priority'     => 70,
+		),
+		'billing_state'      => array(
+			'label'        => __( 'State / County', 'woocommerce' ),
+			'autocomplete' => 'address-level1',
+			'priority'     => 80,
+		),
+		'billing_postcode'   => array(
+			'label'        => __( 'Postcode / ZIP', 'woocommerce' ),
+			'autocomplete' => 'postal-code',
+			'priority'     => 90,
+		),
+		'billing_phone'      => array(
+			'label'        => __( 'Phone', 'woocommerce' ),
+			'type'         => 'tel',
+			'autocomplete' => 'tel',
+			'priority'     => 100,
+		),
+		'billing_email'      => array(
+			'label'        => __( 'Email address', 'woocommerce' ),
+			'validate'     => array( 'email' ),
+			'autocomplete' => 'email',
+			'priority'     => 110,
 		),
 	);
 
+	foreach ( $hidden_defaults as $key => $config ) {
+		$value = isset( $billing[ $key ] ) ? (string) $billing[ $key ] : '';
+
+		$fields['billing'][ $key ] = array_merge(
+			array(
+				'type'              => 'hidden',
+				'required'          => false,
+				'class'             => array(),
+				'default'           => $value,
+				'custom_attributes' => array(
+					'readonly' => 'readonly',
+				),
+			),
+			$config
+		);
+
+		if ( 'billing_email' === $key ) {
+			$fields['billing'][ $key ]['required'] = true;
+		}
+
+		if ( 'billing_country' === $key && $config['type'] === 'country' ) {
+			// Country must remain type country so WooCommerce outputs the correct field name/id.
+			$fields['billing'][ $key ]['type'] = 'hidden';
+		}
+	}
+
 	return $fields;
 }
-add_filter( 'woocommerce_checkout_fields', 'arsenal_settings_wc_stripe_dd_checkout_billing_email_field', 9999 );
+add_filter( 'woocommerce_checkout_fields', 'arsenal_settings_wc_stripe_dd_checkout_hidden_billing_fields', 9999 );
 
 /**
- * Stripe UPE: ensure billing_email is the only WC billing field marked "enabled" for Stripe when
- * checkout-2 has no other billing inputs. Other address/name fields stay on "auto" inside Stripe.
+ * Stripe UPE: mark email + address as collected on the WC checkout form (hidden fields).
  *
  * @param array $params wc_stripe_upe_params.
  * @return array
  */
-function arsenal_settings_wc_stripe_upe_params_use_session_email( $params ) {
+function arsenal_settings_wc_stripe_upe_params_use_session_billing( $params ) {
 	if ( empty( $params['isCheckout'] ) || ! arsenal_settings_wc_stripe_dd_checkout_should_apply() ) {
 		return $params;
 	}
 
-	$email = arsenal_settings_wc_stripe_dd_checkout_customer_email();
-
-	// Do not replace WooCommerce's full billing field list — that marks every field "never" and can
-	// leave the direct debit Payment Element empty when checkout-2 has no visible billing fields.
-	$params['enabledBillingFields'] = array( 'billing_email' );
-
-	$name = arsenal_settings_wc_stripe_dd_checkout_customer_name();
-	if ( $name !== '' ) {
-		$params['customerBillingData'] = array(
-			'name'  => $name,
-			'email' => $email,
-		);
-	} else {
-		$params['customerBillingData'] = array(
-			'email' => $email,
-		);
-	}
+	$params['enabledBillingFields'] = arsenal_settings_wc_stripe_dd_checkout_hidden_field_keys();
+	$params['customerBillingData']  = arsenal_settings_wc_stripe_dd_checkout_customer_billing_data();
 
 	return $params;
 }
-add_filter( 'wc_stripe_upe_params', 'arsenal_settings_wc_stripe_upe_params_use_session_email', 20 );
+add_filter( 'wc_stripe_upe_params', 'arsenal_settings_wc_stripe_upe_params_use_session_billing', 20 );
 
 /**
  * Enqueue checkout helper script for direct-debit payment methods.
@@ -214,11 +414,12 @@ function arsenal_settings_wc_stripe_dd_checkout_enqueue_scripts() {
 		'arsenal-settings-wc-stripe-dd-checkout',
 		'arsenalSettingsWcStripeDdCheckout',
 		array(
-			'paymentMethodIds'     => arsenal_settings_wc_stripe_dd_checkout_payment_method_ids(),
-			'customerEmail'        => arsenal_settings_wc_stripe_dd_checkout_customer_email(),
-			'customerName'         => arsenal_settings_wc_stripe_dd_checkout_customer_name(),
-			'billingEmailSelector' => '#billing_email',
-			'emailRequiredMsg'     => __( 'Your account email is required to pay by direct debit. Please log in or contact support.', 'arsenal-settings' ),
+			'paymentMethodIds'   => arsenal_settings_wc_stripe_dd_checkout_payment_method_ids(),
+			'billingData'        => arsenal_settings_wc_stripe_dd_checkout_billing_data(),
+			'fieldDefaults'      => arsenal_settings_wc_stripe_dd_checkout_field_defaults(),
+			'defaultPostcode'    => arsenal_settings_wc_stripe_dd_checkout_default_postcode(),
+			'emailRequiredMsg'   => __( 'Your account email is required to pay by direct debit. Please log in or contact support.', 'arsenal-settings' ),
+			'addressRequiredMsg' => __( 'Your billing address is required to pay by direct debit. Please update your profile or contact support.', 'arsenal-settings' ),
 		)
 	);
 }
