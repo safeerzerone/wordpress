@@ -1,0 +1,99 @@
+/* 
+Theme Name: Hello Elementor Child
+Theme URI: https://github.com/elementor/hello-theme/
+Description: Hello Elementor Child is a child theme of Hello Elementor, created by Elementor team
+Author: Elementor Team
+Author URI: https://elementor.com/
+Template: hello-elementor
+Version: 1.0.1
+Text Domain: hello-elementor-child
+License: GNU General Public License v3 or later.
+License URI: https://www.gnu.org/licenses/gpl-3.0.html
+Tags: flexible-header, custom-colors, custom-menu, custom-logo, editor-style, featured-images, rtl-language-support, threaded-comments, translation-ready
+*/
+
+/*
+    Add your custom styles here
+*/
+
+.hide-field-ar {
+	display: none!important;
+}
+
+.arm_current_membership_container .arm_cm_cancel_btn_div {
+	display: none!important;
+}
+
+.woocommerce-checkout .woocommerce-customer-details {
+	display: none;
+}
+
+.site-footer .footer-inner .copyright p{
+	line-height: 1.3em !important;
+    font-size: .8rem !important;
+}
+
+ul#menu-primary-menu {
+    list-style: none;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+ul#menu-primary-menu li a, ul#menu-about-menu a, ul.no-style a, ul#menu-useful-links a {
+    color: #fff;
+}
+ul#menu-primary-menu li {
+    padding: 0px 20px;
+}
+ul#menu-about-menu, ul#menu-useful-links, ul.no-style {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.ekit-wid-con .elementskit-btn i {
+    font-size: 8px;
+}
+.continue:after, .elementor-58 .elementor-element.elementor-element-64d43de a.elementskit-btn:after {
+  content: '';
+  width: 0px;
+  height: 1px;
+	margin-top: 5px;
+  display: block;
+  background: #C2001F;
+  transition: 500ms;
+}
+.continue:hover:after, .elementor-58 .elementor-element.elementor-element-64d43de a.elementskit-btn:hover:after {
+	width: 100%;
+}
+.ekit-wid-con .post-meta-list>span a {
+    color: #868686;
+    line-height: 1.55em !important;
+    font-size: .9rem !important;
+    font-weight: 600;
+}
+.ekit-wid-con .post-meta-list>span>i {
+    display: none;
+}
+.ekit-wid-con .elementskit-post-card {
+    padding: 1rem 1.5rem;
+}
+.elementor-58 .elementor-element.elementor-element-64d43de .elementskit-entry-header .entry-title {
+    margin-bottom: 30px;
+}
+.shadow .elementor-widget-wrap {
+    box-shadow: 0 0.5rem 1rem rgb(0 0 0 / 15%) !important;
+	    padding: 0px 0px 10px 0px !important;
+    margin: 10px;
+	border-radius: 4px;
+}
+
+.shadow .elementor-widget-wrap>.elementor-element {
+    margin-bottom: 0 !important;
+}
+
+.elementor-widget-image-box .elementor-image-box-content {
+    padding: 0 20px;
+}
+.continue {
+    padding: 10px 20px !important;
+}

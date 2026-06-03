@@ -1,0 +1,524 @@
+<?php
+/**
+ * Template Name: Feeds
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit; // Exit if accessed directly.
+}
+
+get_header();
+
+global $wpdb;
+
+$ptable_name = $wpdb->prefix . 'posts';
+$SelQry = 'SELECT post_date FROM ' . $ptable_name . ' WHERE post_status = "publish" AND post_type="post" ';
+$selectsub = $wpdb->get_results($wpdb->prepare($SelQry));
+
+
+$years = array();
+foreach($selectsub as $k=>$v){
+	$years[] = date('Y',strtotime($v->post_date));
+}
+
+$years = array_unique($years);
+$years = array_reverse($years, false);
+
+$categories = get_categories(array(
+    'hide_empty' => 0
+));
+
+$protocol = ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] != 'off') || $_SERVER['SERVER_PORT'] == 443) ? "https://" : "http://";  
+
+$CurPageURL =  get_permalink( get_the_ID() );
+
+
+$current_user_id = get_current_user_id();
+$current_user_plan = get_user_meta($current_user_id, 'arm_user_last_plan', true);
+
+?>
+
+<main id="content" class="" role="main">
+
+	<section class="category-nav">
+		<div class="container pos-r site-main">
+			<div class="cat-inner">
+				<div class="news-item white-triangle-bottom">
+					<a href="<?php echo get_permalink(); ?>" class="darkGray-link">All</a>
+				</div>
+				<?php foreach($categories as $k=>$v){ ?>
+                    <?php if($v->slug != 'uncategorized'){ ?>
+				<div class="news-item">
+					<a href="<?php echo get_category_link($v->term_id) ?>" class="darkGray-link"><?php echo $v->name; ?></a>
+				</div>
+                <?php } } ?>
+
+			</div>
+
+			<div class="absolute-nav pos-a">
+				<!-- Category nav dropdown -->
+				<div class="news-items-dropdown">
+					
+						<span class="filter-span">Filter by:</span>
+						<select class="filter-select" onchange="window.location.href=this.value;" data-select2-id="1" tabindex="-1" aria-hidden="true">
+							<?php foreach($years as $k=>$v){ ?>
+							<option value="<?php echo $CurPageURL.'?selected_year='.$v; ?>" <?php echo $_GET['selected_year']==$v?'selected':''; ?> ><?php echo $v; ?></option>
+							<?php } ?>
+						</select>
+					
+				</div>
+			</div>
+			
+		</div>
+	</section>
+	
+	<div class="page-content">
+		<section class="custom-feed elementor-section elementor-top-section elementor-element elementor-element-aa950e1 elementor-section-boxed elementor-section-height-default elementor-section-height-default" data-id="aa950e1" data-element_type="section">
+			<div class="elementor-container elementor-column-gap-default">
+				<div class="elementor-column elementor-col-16 elementor-top-column elementor-element elementor-element-2ac4e0d" data-id="2ac4e0d" data-element_type="column">
+					<div class="elementor-widget-wrap"></div>
+				</div>
+				<div class="elementor-column elementor-col-66 elementor-top-column elementor-element elementor-element-27e1c0a" data-id="27e1c0a" data-element_type="column">
+					<div class="elementor-widget-wrap elementor-element-populated">
+						<div class="elementor-element elementor-element-c094eb9 elementor-widget elementor-widget-heading" data-id="c094eb9" data-element_type="widget" data-widget_type="heading.default">
+							<div class="elementor-widget-container">
+								<h2 class="elementor-heading-title elementor-size-default">AST Feed - showing All from <?php echo isset($_GET['selected_year'])?$_GET['selected_year']:$years[0]; ?></h2>
+							</div>
+						</div>
+						
+					</div>
+				</div>
+				<div class="elementor-column elementor-col-16 elementor-top-column elementor-element elementor-element-c7739a4" data-id="c7739a4" data-element_type="column">
+					<div class="elementor-widget-wrap"></div>
+				</div>
+			</div>
+		</section>
+
+        <section class="elementor-section elementor-inner-section elementor-element elementor-element-048e54c elementor-section-boxed elementor-section-height-default elementor-section-height-default middle-section">
+			<div class="elementor-container elementor-column-gap-default">
+				<div class="elementor-column elementor-col-100 elementor-inner-column elementor-element elementor-element-b73834b">
+					<div class="elementor-widget-wrap elementor-element-populated">
+						<div class="elementor-element elementor-element-64d43de elementor-widget elementor-widget-elementskit-blog-posts">
+							<div class="elementor-widget-container">
+								<div class="ekit-wid-con">
+									<div id="post-items--64d43de" class="row post-items">
+										<?php
+										
+											$post_year = isset($_GET['selected_year'])?$_GET['selected_year']:$years[0];
+											
+											$args = array(
+												'post_type'=> 'post',
+												'orderby'    => 'post_date',
+												'post_status' => 'publish',
+												'order'    => 'DESC',
+												'posts_per_page' => -1,
+												'date_query' => array(
+																'relation' => 'OR',
+																array('year' => $post_year)
+															),
+											);
+											$result = new WP_Query( $args );
+											if ( $result-> have_posts() ) {
+										?>
+										
+										<?php
+											while ( $result->have_posts() ) : $result->the_post();
+											
+											$arm_access = get_post_meta(get_the_ID(), 'arm_access_plan');
+											
+											$permalink = get_permalink();
+										?>
+										<div class="col-lg-4 col-md-6 <?php echo (empty($arm_access) || (!empty($arm_access) && $current_user_plan>0))?'':'myBtn'; ?>">
+
+											<div class="elementskit-post-card">
+												<?php if(!empty($arm_access)){ ?>
+													<?php if($current_user_plan>0){ ?>
+														<span class="lock">
+															<i class="fas fa-unlock"></i>
+														</span>
+													<?php
+														}else{
+															$permalink = 'javascript:void(0)';
+													?>
+														<span class="lock">
+															<i class="fas fa-lock"></i>
+														</span>
+													<?php } ?>
+												<?php } ?>
+												<div class="elementskit-entry-header">
+													<div class="post-meta-list">
+														<span class="meta-date">
+															<i aria-hidden="true" class="icon icon-calendar3"></i>
+															<span class="meta-date-text"><?php echo date('F d, Y', strtotime(get_the_date())); ?></span>
+														</span>
+														<?php
+															$category_detail=get_the_category(get_the_ID());
+															foreach($category_detail as $k=>$v){
+														?>
+														<span class="post-cat">
+															<i aria-hidden="true" class="icon icon-folder"></i>
+															<a href="<?php echo get_category_link($v->term_id); ?>" rel="category tag"><?php echo $v->name; ?></a>
+														</span>
+															<?php } ?>
+													</div>
+													<h2 class="entry-title">
+														<a href="<?php echo $permalink; ?>"><?php echo get_the_title(); ?></a>
+													</h2>
+			
+												</div><!-- .elementskit-entry-header END -->
+
+												<div class="elementskit-post-body ">
+													<div class="btn-wraper">
+                                                        <a href="<?php echo $permalink; ?>" class="elementskit-btn learn-more whitespace--normal">
+															Learn more <i aria-hidden="true" class="icon icon-play-button"></i>
+														</a>
+                                    
+                                                    </div>
+                                                </div><!-- .elementskit-post-body END -->
+											</div>
+                
+										</div>
+										<?php endwhile; ?>
+										<?php } wp_reset_postdata(); ?>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+		
+		<section class="elementor-section elementor-top-section elementor-element elementor-element-49f0232 elementor-section-boxed elementor-section-height-default elementor-section-height-default">
+			<div class="elementor-container elementor-column-gap-default">
+				<div class="elementor-column elementor-col-100 elementor-top-column elementor-element elementor-element-879677b" data-id="879677b" data-element_type="column">
+					<div class="elementor-widget-wrap elementor-element-populated">
+						<section class="elementor-section elementor-inner-section elementor-element elementor-element-a22ef8d elementor-section-boxed elementor-section-height-default elementor-section-height-default" data-id="a22ef8d" data-element_type="section">
+							<div class="elementor-container elementor-column-gap-default">
+								<div class="elementor-column elementor-col-100 elementor-inner-column elementor-element elementor-element-a53f730" data-id="a53f730" data-element_type="column">
+									<div class="elementor-widget-wrap elementor-element-populated">
+										<div class="elementor-element elementor-element-6fd887f elementor-widget elementor-widget-text-editor" data-id="6fd887f" data-element_type="widget" data-widget_type="text-editor.default">
+											<div class="elementor-widget-container">
+												<p class=""><strong>Join us to gain full access</strong></p><p class="">Become a member from as little as £20 a year.</p>
+											</div>
+										</div>
+									</div>
+								</div>
+							</div>
+						</section>
+		
+						<section class="elementor-section elementor-inner-section elementor-element elementor-element-4697f21 elementor-section-boxed elementor-section-height-default elementor-section-height-default" data-id="4697f21" data-element_type="section">
+							<div class="elementor-container elementor-column-gap-default">
+								
+								<div class="elementor-column elementor-col-100 elementor-inner-column elementor-element elementor-element-569765b" data-id="569765b" data-element_type="column">
+									<div class="elementor-widget-wrap elementor-element-populated">
+										<div class="elementor-element elementor-element-b64ae75 elementor-align-center elementor-widget elementor-widget-button" data-id="b64ae75" data-element_type="widget" data-widget_type="button.default">
+											<div class="elementor-widget-container">
+													<div class="elementor-button-wrapper">
+														<a href="/memberships/" class="elementor-button-link elementor-button elementor-size-sm" role="button">
+														<span class="elementor-button-content-wrapper">
+															<span class="elementor-button-text">More membership options</span>
+														</span>
+													</a>
+												</div>
+											</div>
+										</div>
+									</div>
+								</div>
+							</div>
+						</section>
+					</div>
+				</div>
+			</div>
+		</section>
+	</div>
+
+
+<!-- The Modal -->
+<div id="myModal" class="modal">
+
+	<!-- Modal content -->
+	
+		<div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">×</span>
+                </button>
+            </div>
+            <div class="modal-body text-center">
+                <div class="modal-section mb-5">
+                    <h5 class="modal-title large-body-font" id="exampleModalLabel">This is exclusive AST member content</h5>
+                    <p style="margin-bottom: 30px;">Log in to continue reading</p>
+                    <a href="<?php echo site_url('login') ?>" class="btn btn-primary modal-login-btn">Log in to access</a>
+                </div>
+                <div class="modal-section">
+                    <h5 class="modal-title large-body-font" id="exampleModalLabel">Become an AST member for instant access</h5>
+                    <p style="margin-bottom: 30px;">From £20 per year</p>
+                    <a href="<?php echo site_url('memberships') ?>" class="btn btn-primary modal-login-btn modal-join-btn">Join us</a>
+                </div>
+            </div>
+        </div>
+	
+
+</div>
+
+<script>
+// Get the modal
+var modal = document.getElementById("myModal");
+
+// Get the button that opens the modal
+var btn = document.getElementsByClassName("myBtn");
+
+// Get the <span> element that closes the modal
+var span = document.getElementsByClassName("close")[0];
+
+// When the user clicks the button, open the modal 
+btn.onclick = function() {
+  modal.style.display = "block";
+}
+
+// When the user clicks on <span> (x), close the modal
+span.onclick = function() {
+  modal.style.display = "none";
+}
+
+// When the user clicks anywhere outside of the modal, close it
+window.onclick = function(event) {
+  if (event.target == modal) {
+    modal.style.display = "none";
+  }
+}
+
+jQuery(document).ready(function(){
+	jQuery('.myBtn').click(function(){
+		jQuery('#myModal').show();
+	})
+});
+
+</script>
+</main>
+
+<style>
+	.middle-section {
+		padding: 0px 0px 40px 0px;
+	}
+	main#content {
+		background: #e1e1e1;
+	}
+    section.category-nav {
+        padding: 10px 0;
+        background: #fff;
+    }
+	section.category-nav .container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        position: relative;
+    }
+	section.category-nav .container .cat-inner {
+        display: flex;
+    }
+    section.category-nav .container .cat-inner .news-item {
+        padding: 10px 20px;
+    }
+    .absolute-nav.pos-a {
+        position: absolute;
+        top: 0;
+        right: 0;
+    }
+	.news-items-dropdown {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 3px 0;
+    }
+    span.filter-span {
+        width: 130px;
+    }
+    a.darkGray-link {
+        color: #1d1d1d;
+    }
+    .white-triangle-bottom {
+        position: relative;
+    }
+    .white-triangle-bottom:after {
+        bottom: -1.5rem;
+        border-left: 1rem solid transparent;
+        border-right: 1rem solid transparent;
+        border-top: 1rem solid #fff;
+    }
+    .white-triangle-bottom:after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        -webkit-transform: translateX(-50%);
+    }
+    .custom-feed .elementor-heading-title {
+        color: #000000 !important;
+        font-family: "Montserrat", Sans-serif !important;
+        font-size: 1.85rem !important;
+        font-weight: 500 !important;
+        text-transform: none !important;
+        font-style: normal !important;
+        text-decoration: none !important;
+        line-height: 1.2em !important;
+        letter-spacing: 0px !important;
+        text-align: center;
+    }
+    section.custom-feed {
+        padding: 30px 0;
+    }
+	.elementskit-post-card {
+		background-color: #FFFFFF !important;
+		border-style: solid;
+		border-width: 2px 0px 0px 0px;
+		border-color: #C2001F;
+	}
+	.elementskit-btn {
+		padding: 0px 0px 0px 0px !important;
+		color: #C2001F !important;
+		background-color: #FFFFFF !important;
+
+		border-radius: 5px;
+		font-size: 15px;
+		display: inline-block;
+		position: relative;
+		display: inline-block;
+		line-height: 1;
+		-webkit-user-select: none;
+		-moz-user-select: none;
+		-ms-user-select: none;
+		user-select: none;
+		white-space: nowrap;
+		vertical-align: middle;
+		text-align: center;
+		-webkit-transition: all .4s ease;
+		transition: all .4s ease;
+	}
+	.elementskit-btn:hover {
+		color: #C2001F;
+	}
+	a.elementskit-btn:after {
+		content: '';
+		width: 0px;
+		height: 1px;
+		margin-top: 5px;
+		display: block;
+		background: #C2001F;
+		transition: 500ms;
+	}
+	a.elementskit-btn:hover:after {
+		width: 100%;
+	}
+	.elementor-element.elementor-element-49f0232:not(.elementor-motion-effects-element-type-background) {
+		background-color: #173354;
+		text-align: center;
+	}
+
+	.elementor-element.elementor-element-49f0232 {
+		transition: background 0.3s, border 0.3s, border-radius 0.3s, box-shadow 0.3s;
+		padding: 2% 0% 2% 0%;
+	}
+	.elementor-element.elementor-element-6fd887f {
+		text-align: center;
+		color: #FFFFFF;
+		font-family: "Montserrat", Sans-serif;
+		font-size: 16px;
+		font-weight: 500;
+		text-transform: none;
+		font-style: normal;
+		text-decoration: none;
+		line-height: 0.6em;
+		letter-spacing: 0px;
+	}
+	.elementor-element.elementor-element-b64ae75 .elementor-button:hover, .elementor-element.elementor-element-b64ae75 .elementor-button:focus {
+		color: #FFFFFF;
+		background-color: #90001F;
+	}
+	.elementor-element.elementor-element-b64ae75 .elementor-button {
+		fill: #FFFFFF;
+		color: #FFFFFF;
+		background-color: #C2001F;
+		border-radius: 50px 50px 50px 50px;
+		padding: 10px 100px 10px 100px;
+	}
+    .post-items .col-lg-4.col-md-6 {
+        margin: 20px 0;
+    }
+	span.lock {
+		position: absolute;
+		right: 30px;
+		top: 15px;
+	}
+	
+	/* The Modal (background) */
+	.modal {
+	  display: none; /* Hidden by default */
+	  position: fixed; /* Stay in place */
+	  z-index: 1; /* Sit on top */
+	  padding-top: 100px; /* Location of the box */
+	  left: 0;
+	  top: 0;
+	  width: 100%; /* Full width */
+	  height: 100%; /* Full height */
+	  overflow: auto; /* Enable scroll if needed */
+	  background-color: rgb(0,0,0); /* Fallback color */
+	  background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+	}
+
+	/* Modal Content */
+	.modal-content {
+	  background-color: #fefefe;
+	  margin: auto;
+	  padding: 20px;
+	  border: 1px solid #888;
+	  width: 50%;
+		text-align: center;
+		display: grid;
+		align-items: center;
+	}
+
+	/* The Close Button */
+	.close {
+		float: right;
+		font-size: 2.2rem;
+		color: #c2001f;
+		border: none;
+	}
+
+	.close:hover,
+	.close:focus {
+	  color: #000;
+	  text-decoration: none;
+	  cursor: pointer;
+	  background:none;
+	}
+	.modal-login-btn {
+		fill: #FFFFFF;
+		color: #FFFFFF;
+		background-color: #C2001F;
+		border-radius: 50px 50px 50px 50px;
+		padding: 10px 40px 10px 40px;
+	}
+	.modal-login-btn:hover {
+		color: #fff;
+		background-color: #8f0017;
+		border-color: #820015;
+	}
+	.modal-join-btn {
+		background-color: transparent;
+		color: #c2001f;
+		border-color: #c2001f;
+		border: 1px solid;
+	}
+	.modal-join-btn:hover {
+		background-color: #90001f;
+		color: #fff;
+	}
+	.modal-section {
+		margin: 0px 0px 50px 0px;
+	}
+</style>
+    
+<?php get_footer(); ?>
