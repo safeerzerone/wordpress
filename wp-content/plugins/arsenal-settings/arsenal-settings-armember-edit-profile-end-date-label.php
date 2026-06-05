@@ -1,6 +1,6 @@
 <?php
 /**
- * ARMember edit profile: show "No expiry date" instead of "Never Expires" in Current Membership End Date.
+ * ARMember: replace "Never Expires" with "No expiry date" on profile and in emails.
  *
  * @package Arsenal_Settings
  */
@@ -10,51 +10,89 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Whether the current front-end request is the ARMember edit profile page.
+ * Replacement label for recurring memberships without a fixed expiry.
  *
- * @return bool
+ * @return string
  */
-function arsenal_settings_is_armember_edit_profile_page() {
-	if ( ! is_page() ) {
-		return false;
-	}
-
-	$page = get_queried_object();
-	if ( ! $page instanceof WP_Post ) {
-		return false;
-	}
-
-	if ( 'edit_profile' === $page->post_name ) {
-		return true;
-	}
-
-	$arm_global_settings = get_option( 'arm_global_settings', array() );
-	if ( is_array( $arm_global_settings ) && isset( $arm_global_settings['page_settings']['edit_profile_page_id'] ) ) {
-		return (int) $arm_global_settings['page_settings']['edit_profile_page_id'] === (int) $page->ID;
-	}
-
-	return false;
+function arsenal_settings_armember_no_expiry_date_label() {
+	return 'No expiry date';
 }
 
 /**
- * Replace recurring membership End Date label on the edit profile page.
+ * ARMember text domains that use the "Never Expires" string.
  *
- * @return void
+ * @return string[]
  */
-function arsenal_settings_armember_edit_profile_end_date_label_script() {
-	if ( ! arsenal_settings_is_armember_edit_profile_page() ) {
-		return;
-	}
-	?>
-	<script>
-		document.addEventListener('DOMContentLoaded', function () {
-			document.querySelectorAll('.arm_current_membership_list_item_plan_end').forEach(function (endDateCell) {
-				if (endDateCell.textContent.trim() === 'Never Expires') {
-					endDateCell.textContent = 'No expiry date';
-				}
-			});
-		});
-	</script>
-	<?php
+function arsenal_settings_armember_never_expires_text_domains() {
+	return array( 'armember-membership', 'ARMember' );
 }
-add_action( 'wp_footer', 'arsenal_settings_armember_edit_profile_end_date_label_script', 20 );
+
+/**
+ * Replace ARMember "Never Expires" string at translation time.
+ *
+ * @param string $translation Translated text.
+ * @param string $text        Original text.
+ * @param string $domain      Text domain.
+ * @return string
+ */
+function arsenal_settings_armember_filter_never_expires_gettext( $translation, $text, $domain ) {
+	if ( 'Never Expires' === $text && in_array( $domain, arsenal_settings_armember_never_expires_text_domains(), true ) ) {
+		return arsenal_settings_armember_no_expiry_date_label();
+	}
+
+	return $translation;
+}
+add_filter( 'gettext', 'arsenal_settings_armember_filter_never_expires_gettext', 20, 3 );
+
+/**
+ * Fallback for email bodies that may already contain the literal string.
+ *
+ * @param string $content Email content.
+ * @return string
+ */
+function arsenal_settings_armember_filter_never_expires_email_content( $content ) {
+	if ( ! is_string( $content ) || $content === '' || strpos( $content, 'Never Expires' ) === false ) {
+		return $content;
+	}
+
+	return str_replace( 'Never Expires', arsenal_settings_armember_no_expiry_date_label(), $content );
+}
+add_filter( 'arm_change_email_content', 'arsenal_settings_armember_filter_never_expires_email_content', 20 );
+add_filter( 'arm_change_email_content_with_user_detail', 'arsenal_settings_armember_filter_never_expires_email_content', 20 );
+add_filter( 'arm_change_advanced_email_communication_email_notification', 'arsenal_settings_armember_filter_never_expires_email_content', 20 );
+
+add_action('plugins_loaded', function () {
+
+    // Change checkout text
+    add_filter('gettext', function ($translated, $text, $domain) {
+
+        if (!function_exists('is_checkout') || !is_checkout()) {
+            return $translated;
+        }
+
+        $replacements = array(
+            'Billing details' => 'Member Details',
+            'Your order'      => 'Membership Summary',
+            'Product'         => 'Membership Plan',
+            'Subtotal'        => 'Membership Fee',
+            'Total'           => 'Amount Due Today',
+            'Place order'     => 'Submit',
+        );
+
+        if (isset($replacements[$translated])) {
+            return $replacements[$translated];
+        }
+
+        return $translated;
+
+    }, 20, 3);
+
+    // Change Place Order button text
+    add_filter('woocommerce_order_button_text', function () {
+        return 'Submit';
+    });
+
+    // Remove quantity (× 1) from checkout order review
+    add_filter('woocommerce_checkout_cart_item_quantity', '__return_empty_string');
+
+});
