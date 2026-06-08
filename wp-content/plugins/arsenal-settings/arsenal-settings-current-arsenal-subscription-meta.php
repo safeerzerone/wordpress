@@ -1,6 +1,8 @@
 <?php
 /**
- * Sync user meta `current_arsenal_subscription` from the member's active ARMember plan title.
+ * Sync user meta for ARMember subscription plans:
+ * - `current_arsenal_subscription` — reflects the member's active plan (cleared on cancel).
+ * - `arsenal_active_plan` — last assigned/subscribed plan title (unchanged on cancel).
  *
  * @package Arsenal_Settings
  */
@@ -16,6 +18,15 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 function arsenal_settings_current_arsenal_subscription_meta_key() {
 	return 'current_arsenal_subscription';
+}
+
+/**
+ * User meta key storing the last assigned/subscribed plan title (plain string; not cleared on cancel).
+ *
+ * @return string
+ */
+function arsenal_settings_arsenal_active_plan_meta_key() {
+	return 'arsenal_active_plan';
 }
 
 /**
@@ -129,6 +140,51 @@ function arsenal_settings_update_current_arsenal_subscription_meta( $user_id, $p
 }
 
 /**
+ * Resolve an ARMember plan title by plan ID.
+ *
+ * @param int $plan_id ARMember plan ID.
+ * @return string Plan title or empty string when unavailable.
+ */
+function arsenal_settings_resolve_armember_plan_title_by_id( $plan_id ) {
+	$plan_id = (int) $plan_id;
+	if ( $plan_id < 1 ) {
+		return '';
+	}
+
+	global $arm_subscription_plans;
+	if ( ! is_object( $arm_subscription_plans ) || ! method_exists( $arm_subscription_plans, 'arm_get_plan_name_by_id' ) ) {
+		return '';
+	}
+
+	$name = $arm_subscription_plans->arm_get_plan_name_by_id( $plan_id );
+	$name = is_string( $name ) ? trim( $name ) : '';
+	return $name;
+}
+
+/**
+ * Update `arsenal_active_plan` when a user subscribes or is assigned a plan.
+ *
+ * Unlike `current_arsenal_subscription`, this meta is not updated on cancellation.
+ *
+ * @param int $user_id WordPress user ID.
+ * @param int $plan_id ARMember plan ID just assigned/subscribed.
+ */
+function arsenal_settings_update_arsenal_active_plan_meta( $user_id, $plan_id ) {
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return;
+	}
+
+	$title = arsenal_settings_resolve_armember_plan_title_by_id( $plan_id );
+	if ( $title === '' ) {
+		return;
+	}
+
+	update_user_meta( $user_id, arsenal_settings_arsenal_active_plan_meta_key(), $title );
+}
+
+/**
  * Normalize ARMember hook plan argument to a single plan ID.
  *
  * @param mixed $plan_id Plan ID or array of plan IDs.
@@ -146,10 +202,10 @@ function arsenal_settings_normalize_armember_plan_id( $plan_id ) {
  * @param mixed $plan_id ARMember plan ID.
  */
 function arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id ) {
-	arsenal_settings_update_current_arsenal_subscription_meta(
-		$user_id,
-		arsenal_settings_normalize_armember_plan_id( $plan_id )
-	);
+	$normalized_plan_id = arsenal_settings_normalize_armember_plan_id( $plan_id );
+
+	arsenal_settings_update_current_arsenal_subscription_meta( $user_id, $normalized_plan_id );
+	arsenal_settings_update_arsenal_active_plan_meta( $user_id, $normalized_plan_id );
 }
 
 /**
