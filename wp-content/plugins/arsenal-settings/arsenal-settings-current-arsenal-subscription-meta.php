@@ -3,6 +3,7 @@
  * Sync user meta for ARMember subscription plans:
  * - `current_arsenal_subscription` — reflects the member's active plan (cleared on cancel).
  * - `arsenal_active_plan` — last assigned/subscribed plan title (unchanged on cancel).
+ * - `renewal_date` — next membership due date from `arm_next_due_payment` (Y-m-d).
  *
  * @package Arsenal_Settings
  */
@@ -27,6 +28,15 @@ function arsenal_settings_current_arsenal_subscription_meta_key() {
  */
 function arsenal_settings_arsenal_active_plan_meta_key() {
 	return 'arsenal_active_plan';
+}
+
+/**
+ * User meta key storing the next membership due date (Y-m-d).
+ *
+ * @return string
+ */
+function arsenal_settings_renewal_date_meta_key() {
+	return 'renewal_date';
 }
 
 /**
@@ -185,6 +195,79 @@ function arsenal_settings_update_arsenal_active_plan_meta( $user_id, $plan_id ) 
 }
 
 /**
+ * Read `arm_next_due_payment` for a member plan row.
+ *
+ * @param int $user_id WordPress user ID.
+ * @param int $plan_id ARMember plan ID.
+ * @return int Unix timestamp, or 0 when unavailable.
+ */
+function arsenal_settings_get_armember_plan_next_due_timestamp( $user_id, $plan_id ) {
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return 0;
+	}
+
+	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	if ( ! is_array( $plan_data ) || empty( $plan_data['arm_next_due_payment'] ) ) {
+		return 0;
+	}
+
+	return (int) $plan_data['arm_next_due_payment'];
+}
+
+/**
+ * Resolve the renewal date string (`Y-m-d`) from the member's next due payment.
+ *
+ * @param int $user_id            WordPress user ID.
+ * @param int $preferred_plan_id  Plan ID just assigned/changed (optional).
+ * @return string Date string or empty when no next due date is available.
+ */
+function arsenal_settings_resolve_renewal_date_for_user( $user_id, $preferred_plan_id = 0 ) {
+	$user_id           = (int) $user_id;
+	$preferred_plan_id = (int) $preferred_plan_id;
+
+	$active_plan_ids = arsenal_settings_get_user_active_armember_plan_ids( $user_id );
+	if ( empty( $active_plan_ids ) ) {
+		return '';
+	}
+
+	$plan_id = 0;
+	if ( $preferred_plan_id > 0 && in_array( $preferred_plan_id, $active_plan_ids, true ) ) {
+		$plan_id = $preferred_plan_id;
+	} else {
+		$plan_id = (int) $active_plan_ids[0];
+	}
+
+	$next_due = arsenal_settings_get_armember_plan_next_due_timestamp( $user_id, $plan_id );
+	if ( $next_due < 1 ) {
+		return '';
+	}
+
+	return wp_date( 'Y-m-d', $next_due );
+}
+
+/**
+ * Update `renewal_date` from the member's ARMember next due payment.
+ *
+ * @param int $user_id            WordPress user ID.
+ * @param int $preferred_plan_id  Plan ID just assigned/changed (optional).
+ */
+function arsenal_settings_update_renewal_date_meta( $user_id, $preferred_plan_id = 0 ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$date = arsenal_settings_resolve_renewal_date_for_user( $user_id, $preferred_plan_id );
+	if ( $date === '' ) {
+		return;
+	}
+
+	update_user_meta( $user_id, arsenal_settings_renewal_date_meta_key(), $date );
+}
+
+/**
  * Normalize ARMember hook plan argument to a single plan ID.
  *
  * @param mixed $plan_id Plan ID or array of plan IDs.
@@ -206,6 +289,37 @@ function arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id ) {
 
 	arsenal_settings_update_current_arsenal_subscription_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_update_arsenal_active_plan_meta( $user_id, $normalized_plan_id );
+	arsenal_settings_update_renewal_date_meta( $user_id, $normalized_plan_id );
+}
+
+/**
+ * Sync `renewal_date` when ARMember plan row meta is written (next due changes, renewals, backfill).
+ *
+ * @param int    $meta_id    Meta row ID (unused).
+ * @param int    $user_id    WordPress user ID.
+ * @param string $meta_key   User meta key.
+ * @param mixed  $meta_value Meta value (unused; re-reads plan row).
+ */
+function arsenal_settings_on_arm_user_plan_meta_changed( $meta_id, $user_id, $meta_key, $meta_value ) {
+	unset( $meta_id, $meta_value );
+
+	if ( ! preg_match( '/^arm_user_plan_(\d+)$/', (string) $meta_key, $matches ) ) {
+		return;
+	}
+
+	arsenal_settings_update_renewal_date_meta( (int) $user_id, (int) $matches[1] );
+}
+
+/**
+ * @param int   $user_id     WordPress user ID.
+ * @param int   $plan_id     ARMember plan ID.
+ * @param mixed $gateway     Payment gateway (unused).
+ * @param mixed $payment_mode Payment mode (unused).
+ * @param mixed $user_subsdata Subscription data (unused).
+ */
+function arsenal_settings_on_arm_after_recurring_payment_success_sync_renewal_date( $user_id, $plan_id, $gateway, $payment_mode, $user_subsdata ) {
+	unset( $gateway, $payment_mode, $user_subsdata );
+	arsenal_settings_update_renewal_date_meta( (int) $user_id, (int) $plan_id );
 }
 
 /**
@@ -230,10 +344,15 @@ function arsenal_settings_on_arm_after_cancel_subscription( $user_id, $plan ) {
  * @param array $member_data Member form data (unused; re-syncs from user meta).
  */
 function arsenal_settings_on_arm_after_update_user_profile( $user_id, $member_data ) {
+	unset( $member_data );
 	arsenal_settings_on_armember_plan_removed( $user_id );
+	arsenal_settings_update_renewal_date_meta( $user_id, 0 );
 }
 
 add_action( 'arm_after_user_plan_change', 'arsenal_settings_on_armember_plan_assigned', 20, 2 );
 add_action( 'arm_after_user_plan_change_by_admin', 'arsenal_settings_on_armember_plan_assigned', 20, 2 );
 add_action( 'arm_after_cancel_subscription', 'arsenal_settings_on_arm_after_cancel_subscription', 99, 2 );
 add_action( 'arm_after_update_user_profile', 'arsenal_settings_on_arm_after_update_user_profile', 99, 2 );
+add_action( 'added_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed', 10, 4 );
+add_action( 'updated_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed', 10, 4 );
+add_action( 'arm_after_recurring_payment_success_outside', 'arsenal_settings_on_arm_after_recurring_payment_success_sync_renewal_date', 25, 5 );
