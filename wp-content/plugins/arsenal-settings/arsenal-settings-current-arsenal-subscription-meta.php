@@ -356,3 +356,30 @@ add_action( 'arm_after_update_user_profile', 'arsenal_settings_on_arm_after_upda
 add_action( 'added_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed', 10, 4 );
 add_action( 'updated_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed', 10, 4 );
 add_action( 'arm_after_recurring_payment_success_outside', 'arsenal_settings_on_arm_after_recurring_payment_success_sync_renewal_date', 25, 5 );
+
+/**
+ * Mirror the ARMember phone meta to a dedicated formatted_phone_number key.
+ *
+ * @param int    $meta_id    Meta row ID (unused).
+ * @param int    $user_id    WordPress user ID.
+ * @param string $meta_key   User meta key.
+ * @param mixed  $meta_value Meta value (unused; re-reads saved meta).
+ */
+function arsenal_settings_sync_formatted_phone_number_usermeta( $meta_id, $user_id, $meta_key, $meta_value ) {
+	unset( $meta_id, $meta_value );
+
+	if ( 'text_21wqp' !== $meta_key ) {
+		return;
+	}
+
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$value = get_user_meta( $user_id, 'text_21wqp', true );
+	update_user_meta( $user_id, 'formatted_phone_number', $value );
+}
+
+add_action( 'added_user_meta', 'arsenal_settings_sync_formatted_phone_number_usermeta', 10, 4 );
+add_action( 'updated_user_meta', 'arsenal_settings_sync_formatted_phone_number_usermeta', 10, 4 );
