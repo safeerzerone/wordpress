@@ -82,6 +82,61 @@ function arsenal_settings_stripe_payment_method_type_is_direct_debit( $type ) {
 }
 
 /**
+ * Whether ensure-recurring should run for this plan (ARMember Stripe auto-debit or WooCommerce bank debit).
+ *
+ * Stripe default payment method is validated separately; this gate only checks ARMember plan context.
+ *
+ * @param int $user_id WordPress user ID.
+ * @param int $plan_id ARMember plan ID.
+ * @return bool
+ */
+function arsenal_settings_user_armember_plan_is_ensure_recurring_direct_debit( $user_id, $plan_id ) {
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return false;
+	}
+
+	if ( arsenal_settings_user_armember_plan_is_stripe_auto_debit( $user_id, $plan_id ) ) {
+		return true;
+	}
+
+	if ( function_exists( 'arsenal_settings_user_plan_is_stripe_direct_debit' )
+		&& arsenal_settings_user_plan_is_stripe_direct_debit( $user_id, $plan_id ) ) {
+		return true;
+	}
+
+	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	if ( ! is_array( $plan_data ) ) {
+		return false;
+	}
+
+	$gateway = isset( $plan_data['arm_user_gateway'] ) ? strtolower( trim( (string) $plan_data['arm_user_gateway'] ) ) : '';
+	$mode    = isset( $plan_data['arm_payment_mode'] ) ? (string) $plan_data['arm_payment_mode'] : '';
+
+	if ( 'woocommerce' !== $gateway || ! in_array( $mode, array( 'manual_subscription', 'auto_debit_subscription' ), true ) ) {
+		return false;
+	}
+
+	$stripe_customer = get_user_meta( $user_id, 'wp__stripe_customer_id', true );
+	if ( is_string( $stripe_customer ) && preg_match( '/^cus_[a-zA-Z0-9]+$/', $stripe_customer ) ) {
+		return true;
+	}
+
+	if ( function_exists( 'arsenal_settings_stripe_find_customer_id_by_email' ) ) {
+		$user = get_userdata( $user_id );
+		if ( $user && ! empty( $user->user_email ) ) {
+			$customer_id = arsenal_settings_stripe_find_customer_id_by_email( (string) $user->user_email );
+			if ( ! is_wp_error( $customer_id ) && is_string( $customer_id ) && $customer_id !== '' ) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+/**
  * ARMember user-plan meta: paid via Stripe with auto-debit (off-session / mandate) mode.
  *
  * @param int $user_id WordPress user ID.
@@ -314,10 +369,10 @@ function arsenal_settings_rest_ensure_recurring_subscription_by_active_armember_
 		);
 	}
 
-	if ( ! arsenal_settings_user_armember_plan_is_stripe_auto_debit( (int) $user->ID, $plan_id ) ) {
+	if ( ! arsenal_settings_user_armember_plan_is_ensure_recurring_direct_debit( (int) $user->ID, $plan_id ) ) {
 		return new WP_REST_Response(
 			array(
-				'message' => __( 'The active plan is not recorded as Stripe auto-debit (direct debit) in ARMember; nothing to do.', 'arsenal-settings' ),
+				'message' => __( 'The active plan is not eligible for Stripe direct-debit recurring (ARMember Stripe auto-debit or WooCommerce bank debit); nothing to do.', 'arsenal-settings' ),
 				'status'  => true,
 				'code'    => 'skipped_not_stripe_auto_debit_plan',
 				'action'  => 'skipped',

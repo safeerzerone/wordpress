@@ -21,6 +21,7 @@ require_once __DIR__ . '/arsenal-settings-woocommerce-payment-failures.php';
 require_once __DIR__ . '/arsenal-settings-wc-dd-overdue-cron.php';
 require_once __DIR__ . '/arsenal-settings-current-arsenal-subscription-meta.php';
 require_once __DIR__ . '/arsenal-settings-wc-stripe-dd-checkout.php';
+require_once __DIR__ . '/arsenal-settings-armember-wc-defer-signup.php';
 require_once __DIR__ . '/arsenal-settings-armember-edit-profile-end-date-label.php';
 
 /** User meta key: plaintext API key shown once after generation (must match saved option). */

@@ -26,6 +26,34 @@
 		return '';
 	}
 
+	function savePaymentMethodFieldName( paymentMethodId ) {
+		paymentMethodId = paymentMethodId || getSelectedPaymentMethod();
+		if ( paymentMethodId.indexOf( 'stripe_' ) !== 0 ) {
+			return '';
+		}
+		return 'wc-stripe_' + paymentMethodId.substring( 7 ) + '-new-payment-method';
+	}
+
+	function injectSavePaymentMethodField() {
+		if ( ! config.forceSavePaymentMethod && ! isDirectDebitSelected() ) {
+			return;
+		}
+
+		var fieldName = savePaymentMethodFieldName();
+		if ( ! fieldName ) {
+			return;
+		}
+
+		var $form = getCheckoutForm();
+		var $field = $form.find( '[name="' + fieldName + '"]' ).first();
+		if ( ! $field.length ) {
+			$field = $( '<input type="hidden" />' )
+				.attr( 'name', fieldName )
+				.appendTo( $form );
+		}
+		$field.val( '1' );
+	}
+
 	function syncBillingFieldsToCheckout() {
 		var $form = getCheckoutForm();
 		if ( ! $form.length ) {
@@ -84,6 +112,7 @@
 		syncBillingFieldsToCheckout();
 
 		if ( hasRequiredBillingForDirectDebit() ) {
+			injectSavePaymentMethodField();
 			return true;
 		}
 
@@ -100,8 +129,12 @@
 	}
 
 	syncBillingFieldsToCheckout();
+	injectSavePaymentMethodField();
 
-	$( document.body ).on( 'updated_checkout payment_method_selected', syncBillingFieldsToCheckout );
+	$( document.body ).on( 'updated_checkout payment_method_selected', function () {
+		syncBillingFieldsToCheckout();
+		injectSavePaymentMethodField();
+	} );
 
 	$.each( paymentMethodIds, function ( _, paymentMethodId ) {
 		$( document.body ).on( 'checkout_place_order_' + paymentMethodId, function () {
@@ -110,8 +143,9 @@
 	} );
 
 	getCheckoutForm().on( 'checkout_place_order', function () {
-		if ( isDirectDebitSelected() ) {
+		if ( isDirectDebitSelected() || config.forceSavePaymentMethod ) {
 			syncBillingFieldsToCheckout();
+			injectSavePaymentMethodField();
 		}
 	} );
 }( jQuery ) );
