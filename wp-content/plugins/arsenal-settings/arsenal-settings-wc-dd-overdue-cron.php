@@ -416,17 +416,20 @@ function arsenal_settings_wc_dd_overdue_stripe_transaction_already_logged( $user
 }
 
 /**
- * Find the newest Stripe paid invoice for this due cycle that is not yet in payment_log.
+ * Find every Stripe paid invoice for this due cycle that is not yet in payment_log.
  *
- * Prefers paid_at on or after arm_next_due_payment (handles stale due dates when a newer charge exists).
+ * Returns matches ordered oldest-first (ascending paid_at) so the caller reconciles each
+ * missed settlement in chronological order. Direct-debit invoices settle late, so a single
+ * due cycle can expose more than one unlogged paid invoice at once (e.g. a late-settling
+ * invoice plus the next cycle's invoice); returning only the newest would skip the older one.
  *
  * @param WP_User $user    User.
  * @param int     $plan_id Plan id.
  * @param int     $due_ts  Due timestamp.
  * @param array   $expect  amount_minor, currency.
- * @return array|WP_Error Stripe match array or empty.
+ * @return array|WP_Error List of Stripe match arrays (oldest-first) or empty array; WP_Error on lookup failure.
  */
-function arsenal_settings_wc_dd_overdue_find_stripe_match_for_due_payment( $user, $plan_id, $due_ts, array $expect ) {
+function arsenal_settings_wc_dd_overdue_find_stripe_matches_for_due_payment( $user, $plan_id, $due_ts, array $expect ) {
 	if ( ! $user || empty( $user->user_email ) || ! is_email( $user->user_email ) ) {
 		return array();
 	}
@@ -528,19 +531,20 @@ function arsenal_settings_wc_dd_overdue_find_stripe_match_for_due_payment( $user
 	usort(
 		$candidates,
 		static function ( $a, $b ) {
-			return (int) $b['paid_at'] <=> (int) $a['paid_at'];
+			return (int) $a['paid_at'] <=> (int) $b['paid_at'];
 		}
 	);
 
+	$matches = array();
 	foreach ( $candidates as $candidate ) {
 		$match = $candidate['match'];
 		if ( arsenal_settings_wc_dd_overdue_stripe_transaction_already_logged( (int) $user->ID, $plan_id, $match ) > 0 ) {
 			continue;
 		}
-		return $match;
+		$matches[] = $match;
 	}
 
-	return array();
+	return $matches;
 }
 
 /**
@@ -870,20 +874,20 @@ function arsenal_settings_wc_dd_overdue_cron_reconcile_plan( $user_id, $plan_id 
 		return array( 'status' => 'skipped_no_user' );
 	}
 
-	$stripe_match = arsenal_settings_wc_dd_overdue_find_stripe_match_for_due_payment( $user, $plan_id, $due_ts, $expect );
-	if ( is_wp_error( $stripe_match ) ) {
+	$stripe_matches = arsenal_settings_wc_dd_overdue_find_stripe_matches_for_due_payment( $user, $plan_id, $due_ts, $expect );
+	if ( is_wp_error( $stripe_matches ) ) {
 		arsenal_settings_wc_dd_overdue_cron_log(
 			'stripe_error',
 			array(
 				'user_id' => $user_id,
 				'plan_id' => $plan_id,
-				'error'   => $stripe_match->get_error_message(),
+				'error'   => $stripe_matches->get_error_message(),
 			)
 		);
 		return array( 'status' => 'stripe_error' );
 	}
 
-	if ( empty( $stripe_match ) ) {
+	if ( empty( $stripe_matches ) ) {
 		arsenal_settings_wc_dd_overdue_cron_log(
 			'no_stripe_match_for_due',
 			array(
@@ -898,13 +902,66 @@ function arsenal_settings_wc_dd_overdue_cron_reconcile_plan( $user_id, $plan_id 
 		return array( 'status' => 'no_stripe_match' );
 	}
 
-	$insert_result = arsenal_settings_wc_dd_overdue_insert_payment_log_from_stripe_match( $user_id, $plan_id, $stripe_match, $user );
-	$log_id        = isset( $insert_result['arm_log_id'] ) ? (int) $insert_result['arm_log_id'] : 0;
-	$insert_status = isset( $insert_result['status'] ) ? (string) $insert_result['status'] : '';
+	$inserted_count = 0;
+	$last_log_id    = 0;
+	$insert_failed  = 0;
 
-	if ( 'already_logged_for_transaction' === $insert_status ) {
+	// Reconcile every unlogged paid invoice for this cycle (oldest-first) so a late-settling
+	// invoice is never skipped when a newer invoice already exists in the same window.
+	foreach ( $stripe_matches as $stripe_match ) {
+		$insert_result = arsenal_settings_wc_dd_overdue_insert_payment_log_from_stripe_match( $user_id, $plan_id, $stripe_match, $user );
+		$log_id        = isset( $insert_result['arm_log_id'] ) ? (int) $insert_result['arm_log_id'] : 0;
+		$insert_status = isset( $insert_result['status'] ) ? (string) $insert_result['status'] : '';
+
+		if ( 'already_logged_for_transaction' === $insert_status ) {
+			continue;
+		}
+
+		if ( 'inserted' !== $insert_status || $log_id < 1 ) {
+			$insert_failed++;
+			arsenal_settings_wc_dd_overdue_cron_log(
+				'payment_log_insert_skipped',
+				array(
+					'user_id' => $user_id,
+					'plan_id' => $plan_id,
+					'status'  => $insert_status,
+					'invoice' => isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : '',
+				)
+			);
+			continue;
+		}
+
+		$inserted_count++;
+		$last_log_id = $log_id;
+
 		if ( function_exists( 'arsenal_settings_restore_arm_plan_from_stripe_match' ) ) {
 			arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id, $stripe_match );
+		}
+
+		arsenal_settings_wc_dd_overdue_cron_apply_arm_success( $user_id, $plan_id, 'reconciled_stripe' );
+
+		arsenal_settings_wc_dd_overdue_cron_log(
+			'payment_log_inserted',
+			array(
+				'user_id'        => $user_id,
+				'plan_id'        => $plan_id,
+				'arm_log_id'     => $log_id,
+				'stripe_invoice' => isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : '',
+				'stripe_charge'  => isset( $stripe_match['latest_charge_id'] ) ? (string) $stripe_match['latest_charge_id'] : '',
+				'paid_at'        => isset( $stripe_match['paid_at'] ) ? (int) $stripe_match['paid_at'] : 0,
+			)
+		);
+	}
+
+	if ( $inserted_count < 1 ) {
+		if ( $insert_failed > 0 ) {
+			return array( 'status' => 'insert_failed' );
+		}
+
+		// Every match was already logged: advance the stale due date so this plan is not re-scanned forever.
+		$last_match = end( $stripe_matches );
+		if ( is_array( $last_match ) && function_exists( 'arsenal_settings_restore_arm_plan_from_stripe_match' ) ) {
+			arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id, $last_match );
 		}
 		if ( function_exists( 'arsenal_settings_resolve_arm_next_due_payment_timestamp' ) ) {
 			$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
@@ -916,49 +973,19 @@ function arsenal_settings_wc_dd_overdue_cron_reconcile_plan( $user_id, $plan_id 
 			}
 		}
 		return array(
-			'status'       => 'already_logged_for_transaction',
-			'arm_log_id'   => $log_id,
-			'stripe_invoice' => isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : '',
+			'status'         => 'already_logged_for_transaction',
+			'arm_log_id'     => 0,
+			'stripe_invoice' => is_array( $last_match ) && isset( $last_match['invoice_id'] ) ? (string) $last_match['invoice_id'] : '',
 		);
 	}
-
-	if ( 'inserted' !== $insert_status || $log_id < 1 ) {
-		arsenal_settings_wc_dd_overdue_cron_log(
-			'payment_log_insert_skipped',
-			array(
-				'user_id'  => $user_id,
-				'plan_id'  => $plan_id,
-				'status'   => $insert_status,
-				'invoice'  => isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : '',
-			)
-		);
-		return array( 'status' => 'insert_failed' );
-	}
-
-	if ( function_exists( 'arsenal_settings_restore_arm_plan_from_stripe_match' ) ) {
-		arsenal_settings_restore_arm_plan_from_stripe_match( $user_id, $plan_id, $stripe_match );
-	}
-
-	arsenal_settings_wc_dd_overdue_cron_apply_arm_success( $user_id, $plan_id, 'reconciled_stripe' );
 
 	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
 	$still_due = is_array( $plan_data ) && arsenal_settings_wc_dd_overdue_cron_due_ready( $plan_data );
 
-	arsenal_settings_wc_dd_overdue_cron_log(
-		'payment_log_inserted',
-		array(
-			'user_id'        => $user_id,
-			'plan_id'        => $plan_id,
-			'arm_log_id'     => $log_id,
-			'stripe_invoice' => isset( $stripe_match['invoice_id'] ) ? (string) $stripe_match['invoice_id'] : '',
-			'stripe_charge'  => isset( $stripe_match['latest_charge_id'] ) ? (string) $stripe_match['latest_charge_id'] : '',
-			'paid_at'        => isset( $stripe_match['paid_at'] ) ? (int) $stripe_match['paid_at'] : 0,
-		)
-	);
-
 	return array(
-		'status'     => $still_due ? 'reconciled_stripe_due_stale' : 'reconciled_stripe',
-		'arm_log_id' => $log_id,
+		'status'         => $still_due ? 'reconciled_stripe_due_stale' : 'reconciled_stripe',
+		'arm_log_id'     => $last_log_id,
+		'inserted_count' => $inserted_count,
 	);
 }
 
