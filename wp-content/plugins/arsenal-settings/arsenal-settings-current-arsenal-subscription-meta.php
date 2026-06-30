@@ -293,7 +293,15 @@ function arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id ) {
 }
 
 /**
- * Sync `renewal_date` when ARMember plan row meta is written (next due changes, renewals, backfill).
+ * Sync plan-derived user meta when an ARMember plan row (`arm_user_plan_<id>`) is written.
+ *
+ * Covers subscription, renewal, next-due, and cancellation writes regardless of how the plan
+ * was assigned. This is required for payment-gateway self-signups (Stripe SCA card, PayPal),
+ * which assign the plan by writing `arm_user_plan_<id>` / `arm_user_plan_ids` directly and do
+ * not reliably fire `arm_after_user_plan_change`. Syncs:
+ * - `current_arsenal_subscription` — recomputed from the user's active plans.
+ * - `arsenal_active_plan` — last assigned/subscribed plan title.
+ * - `renewal_date` — next membership due date.
  *
  * @param int    $meta_id    Meta row ID (unused).
  * @param int    $user_id    WordPress user ID.
@@ -307,7 +315,12 @@ function arsenal_settings_on_arm_user_plan_meta_changed( $meta_id, $user_id, $me
 		return;
 	}
 
-	arsenal_settings_update_renewal_date_meta( (int) $user_id, (int) $matches[1] );
+	$user_id = (int) $user_id;
+	$plan_id = (int) $matches[1];
+
+	arsenal_settings_update_current_arsenal_subscription_meta( $user_id, $plan_id );
+	arsenal_settings_update_arsenal_active_plan_meta( $user_id, $plan_id );
+	arsenal_settings_update_renewal_date_meta( $user_id, $plan_id );
 }
 
 /**
