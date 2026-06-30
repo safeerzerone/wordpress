@@ -45,7 +45,7 @@ function arsenal_settings_renewal_date_meta_key() {
  * @return string
  */
 function arsenal_settings_no_active_plan_label() {
-	return 'No active plan';
+	return 'No plan';
 }
 
 /**
