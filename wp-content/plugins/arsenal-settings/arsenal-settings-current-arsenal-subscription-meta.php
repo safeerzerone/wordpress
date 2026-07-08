@@ -3,7 +3,7 @@
  * Sync user meta for ARMember subscription plans:
  * - `current_arsenal_subscription` — reflects the member's active plan (cleared on cancel).
  * - `arsenal_active_plan` — last assigned/subscribed plan title (unchanged on cancel).
- * - `renewal_date` — next membership due date from `arm_next_due_payment` (Y-m-d).
+ * - `renewal_date` — next due or expiry from ARMember plan meta (`arm_next_due_payment`, else `arm_expire_plan`; Y-m-d).
  *
  * @package Arsenal_Settings
  */
@@ -31,7 +31,7 @@ function arsenal_settings_arsenal_active_plan_meta_key() {
 }
 
 /**
- * User meta key storing the next membership due date (Y-m-d).
+ * User meta key storing the next membership due or expiry date (Y-m-d).
  *
  * @return string
  */
@@ -195,13 +195,18 @@ function arsenal_settings_update_arsenal_active_plan_meta( $user_id, $plan_id ) 
 }
 
 /**
- * Read `arm_next_due_payment` for a member plan row.
+ * Resolve the renewal timestamp for a member plan row.
+ *
+ * Priority:
+ * 1. `arm_next_due_payment` — next recurring billing date.
+ * 2. Computed next due (ARMember / Stripe / WooCommerce) when meta is not written yet.
+ * 3. `arm_expire_plan` — membership expiry for finite / non-recurring plans.
  *
  * @param int $user_id WordPress user ID.
  * @param int $plan_id ARMember plan ID.
  * @return int Unix timestamp, or 0 when unavailable.
  */
-function arsenal_settings_get_armember_plan_next_due_timestamp( $user_id, $plan_id ) {
+function arsenal_settings_get_armember_plan_renewal_timestamp( $user_id, $plan_id ) {
 	$user_id = (int) $user_id;
 	$plan_id = (int) $plan_id;
 	if ( $user_id < 1 || $plan_id < 1 ) {
@@ -209,46 +214,70 @@ function arsenal_settings_get_armember_plan_next_due_timestamp( $user_id, $plan_
 	}
 
 	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
-	if ( ! is_array( $plan_data ) || empty( $plan_data['arm_next_due_payment'] ) ) {
-		return 0;
+	if ( is_array( $plan_data ) && ! empty( $plan_data['arm_next_due_payment'] ) ) {
+		return (int) $plan_data['arm_next_due_payment'];
 	}
 
-	return (int) $plan_data['arm_next_due_payment'];
+	// Admin assignment and some gateway flows update plan meta in multiple passes; the assignment
+	// hook can run before `arm_next_due_payment` is persisted. Fall back to ARMember/Stripe resolution.
+	if ( function_exists( 'arsenal_settings_resolve_arm_next_due_payment_timestamp' ) ) {
+		$resolved = (int) arsenal_settings_resolve_arm_next_due_payment_timestamp( $user_id, $plan_id, null );
+		if ( $resolved > 0 ) {
+			return $resolved;
+		}
+	}
+
+	if ( is_array( $plan_data ) && ! empty( $plan_data['arm_expire_plan'] ) ) {
+		$expire = (int) $plan_data['arm_expire_plan'];
+		if ( $expire > 0 ) {
+			return $expire;
+		}
+	}
+
+	return 0;
 }
 
 /**
- * Resolve the renewal date string (`Y-m-d`) from the member's next due payment.
+ * Resolve the renewal date string (`Y-m-d`) from ARMember plan meta.
+ *
+ * Uses `arm_next_due_payment` when present, otherwise `arm_expire_plan` for finite plans.
  *
  * @param int $user_id            WordPress user ID.
  * @param int $preferred_plan_id  Plan ID just assigned/changed (optional).
- * @return string Date string or empty when no next due date is available.
+ * @return string Date string or empty when no due/expiry date is available.
  */
 function arsenal_settings_resolve_renewal_date_for_user( $user_id, $preferred_plan_id = 0 ) {
 	$user_id           = (int) $user_id;
 	$preferred_plan_id = (int) $preferred_plan_id;
 
-	$active_plan_ids = arsenal_settings_get_user_active_armember_plan_ids( $user_id );
-	if ( empty( $active_plan_ids ) ) {
-		return '';
+	$plan_id = 0;
+	if ( $preferred_plan_id > 0 ) {
+		$assigned_plan_ids = get_user_meta( $user_id, 'arm_user_plan_ids', true );
+		$assigned_plan_ids = is_array( $assigned_plan_ids ) ? array_map( 'intval', $assigned_plan_ids ) : array();
+		if ( in_array( $preferred_plan_id, $assigned_plan_ids, true ) ) {
+			$plan_id = $preferred_plan_id;
+		}
 	}
 
-	$plan_id = 0;
-	if ( $preferred_plan_id > 0 && in_array( $preferred_plan_id, $active_plan_ids, true ) ) {
-		$plan_id = $preferred_plan_id;
-	} else {
+	if ( $plan_id < 1 ) {
+		$active_plan_ids = arsenal_settings_get_user_active_armember_plan_ids( $user_id );
+		if ( empty( $active_plan_ids ) ) {
+			return '';
+		}
+
 		$plan_id = (int) $active_plan_ids[0];
 	}
 
-	$next_due = arsenal_settings_get_armember_plan_next_due_timestamp( $user_id, $plan_id );
-	if ( $next_due < 1 ) {
+	$renewal_ts = arsenal_settings_get_armember_plan_renewal_timestamp( $user_id, $plan_id );
+	if ( $renewal_ts < 1 ) {
 		return '';
 	}
 
-	return wp_date( 'Y-m-d', $next_due );
+	return wp_date( 'Y-m-d', $renewal_ts );
 }
 
 /**
- * Update `renewal_date` from the member's ARMember next due payment.
+ * Update `renewal_date` from the member's ARMember next due or expiry date.
  *
  * @param int $user_id            WordPress user ID.
  * @param int $preferred_plan_id  Plan ID just assigned/changed (optional).
@@ -281,6 +310,36 @@ function arsenal_settings_normalize_armember_plan_id( $plan_id ) {
 }
 
 /**
+ * Queue a renewal_date sync for end-of-request (after ARMember finishes all plan meta writes).
+ *
+ * @param int $user_id WordPress user ID.
+ * @param int $plan_id ARMember plan ID.
+ */
+function arsenal_settings_defer_renewal_date_meta_sync( $user_id, $plan_id ) {
+	static $queued = array();
+
+	$user_id = (int) $user_id;
+	$plan_id = (int) $plan_id;
+	if ( $user_id < 1 || $plan_id < 1 ) {
+		return;
+	}
+
+	$key = $user_id . ':' . $plan_id;
+	if ( isset( $queued[ $key ] ) ) {
+		return;
+	}
+
+	$queued[ $key ] = true;
+	add_action(
+		'shutdown',
+		static function () use ( $user_id, $plan_id ) {
+			arsenal_settings_update_renewal_date_meta( $user_id, $plan_id );
+		},
+		999
+	);
+}
+
+/**
  * @param int   $user_id WordPress user ID.
  * @param mixed $plan_id ARMember plan ID.
  */
@@ -290,6 +349,7 @@ function arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id ) {
 	arsenal_settings_update_current_arsenal_subscription_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_update_arsenal_active_plan_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_update_renewal_date_meta( $user_id, $normalized_plan_id );
+	arsenal_settings_defer_renewal_date_meta_sync( $user_id, $normalized_plan_id );
 }
 
 /**
