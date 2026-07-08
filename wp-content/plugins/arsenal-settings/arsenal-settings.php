@@ -6350,10 +6350,25 @@ function arsenal_settings_cron_schedules( $schedules ) {
 add_filter( 'cron_schedules', 'arsenal_settings_cron_schedules' );
 
 /**
+ * Temporarily disable the WC Stripe → ARMember payment log backfill cron.
+ *
+ * Set to false (or remove the define) to re-enable scheduling.
+ */
+if ( ! defined( 'ARSENAL_SETTINGS_DISABLE_WC_STRIPE_ARM_PAYMENT_LOG_CRON' ) ) {
+	define( 'ARSENAL_SETTINGS_DISABLE_WC_STRIPE_ARM_PAYMENT_LOG_CRON', true );
+}
+
+/**
  * Schedule the missed WooCommerce Stripe renewal backfill cron every 2 hours.
  */
 function arsenal_settings_schedule_wc_stripe_arm_payment_log_cron() {
-	$hook     = 'arsenal_settings_sync_wc_stripe_arm_payment_logs';
+	$hook = 'arsenal_settings_sync_wc_stripe_arm_payment_logs';
+
+	if ( ARSENAL_SETTINGS_DISABLE_WC_STRIPE_ARM_PAYMENT_LOG_CRON ) {
+		wp_clear_scheduled_hook( $hook );
+		return;
+	}
+
 	$schedule = wp_get_schedule( $hook );
 
 	if ( $schedule && 'every_two_hours' !== $schedule ) {
@@ -6372,6 +6387,17 @@ add_action( 'init', 'arsenal_settings_schedule_wc_stripe_arm_payment_log_cron' )
  */
 function arsenal_settings_cron_sync_wc_stripe_arm_payment_logs() {
 	global $wpdb;
+
+	if ( ARSENAL_SETTINGS_DISABLE_WC_STRIPE_ARM_PAYMENT_LOG_CRON ) {
+		arsenal_settings_wc_stripe_arm_cron_log(
+			'cron_skip',
+			array(
+				'reason' => 'temporarily_disabled',
+				'hook'   => 'arsenal_settings_sync_wc_stripe_arm_payment_logs',
+			)
+		);
+		return;
+	}
 
 	if ( ! function_exists( 'wc_get_orders' ) ) {
 		arsenal_settings_wc_stripe_arm_cron_log(
