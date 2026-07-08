@@ -11,23 +11,141 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 global $wpdb;
 
-$CurPageURL =  get_category_link( get_queried_object()->term_id );
-$CurPageId =   get_queried_object()->term_id;
-$CurPageSlug =  get_queried_object()->slug;
+$queried_object = get_queried_object();
+$request_uri    = ! empty( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '';
+$request_path   = trim( (string) parse_url( $request_uri, PHP_URL_PATH ), '/' );
+$category_name  = get_query_var( 'category_name' );
+$cat_query_var  = (int) get_query_var( 'cat' );
 
-$ptable_name = $wpdb->prefix . 'posts';
-$SelQry = 'SELECT ID,post_date FROM ' . $ptable_name . ' WHERE post_status = "publish" AND post_type="post" ';
-$selectsub = $wpdb->get_results($wpdb->prepare($SelQry));
+$CurPageId         = 0;
+$CurPageSlug       = '';
+$CurPageURL        = '';
+$resolved_category = null;
+$is_all_feeds      = false;
 
+if ( is_category() ) {
+	$resolved_category = get_queried_object();
+} elseif ( $category_name ) {
+	$resolved_category = get_category_by_slug( $category_name );
+} elseif ( $cat_query_var ) {
+	$resolved_category = get_category( $cat_query_var );
+} elseif ( $request_path ) {
+	$category_base = trim( (string) get_option( 'category_base' ), '/' );
+	if ( '' === $category_base ) {
+		$category_base = 'category';
+	}
 
-$years = array();
-foreach($selectsub as $k=>$v){
-	if(in_category($CurPageId, $v->ID))
-		$years[] = date('Y',strtotime($v->post_date));
+	if ( preg_match( '#^' . preg_quote( $category_base, '/' ) . '/([^/]+)/?$#', $request_path, $matches ) ) {
+		$resolved_category = get_category_by_slug( $matches[1] );
+	} else {
+		$path_segments = explode( '/', $request_path );
+		$maybe_slug    = end( $path_segments );
+		if ( $maybe_slug && $maybe_slug !== $category_base && 'feeds' !== $maybe_slug ) {
+			$resolved_category = get_category_by_slug( $maybe_slug );
+		}
+	}
 }
 
-$years = array_unique($years);
-$years = array_reverse($years, false);
+if ( $resolved_category && ! is_wp_error( $resolved_category ) ) {
+	$CurPageId   = (int) $resolved_category->term_id;
+	$CurPageSlug = $resolved_category->slug;
+	$CurPageURL  = get_category_link( $CurPageId );
+	$category_title = $resolved_category->name;
+} else {
+	$category_base  = trim( (string) get_option( 'category_base' ), '/' );
+	$is_feeds_page  = (
+		'feeds' === $request_path
+		|| ( $category_base && $request_path === $category_base )
+		|| ( is_object( $queried_object ) && isset( $queried_object->post_name ) && 'feeds' === $queried_object->post_name )
+	);
+
+	if ( $is_feeds_page ) {
+		$is_all_feeds   = true;
+		$category_title = 'All';
+
+		if ( is_object( $queried_object ) && isset( $queried_object->ID ) ) {
+			$CurPageURL = get_permalink( $queried_object->ID );
+		} else {
+			$feeds_page = get_page_by_path( 'feeds' );
+			$CurPageURL = $feeds_page ? get_permalink( $feeds_page->ID ) : home_url( '/feeds/' );
+		}
+	} else {
+		$category_title = single_cat_title( '', false );
+	}
+}
+
+$years        = array();
+$default_year = (int) gmdate( 'Y' );
+
+if ( $CurPageSlug ) {
+	$category_post_ids = get_posts(
+		array(
+			'post_type'              => 'post',
+			'post_status'            => 'publish',
+			'category_name'          => $CurPageSlug,
+			'posts_per_page'         => -1,
+			'fields'                 => 'ids',
+			'no_found_rows'          => true,
+			'update_post_meta_cache' => false,
+			'update_post_term_cache' => false,
+		)
+	);
+
+	if ( ! empty( $category_post_ids ) ) {
+		$id_list = implode( ',', array_map( 'intval', $category_post_ids ) );
+		$years   = array_map(
+			'intval',
+			$wpdb->get_col(
+				"SELECT DISTINCT YEAR(post_date) AS year
+				FROM {$wpdb->posts}
+				WHERE ID IN ({$id_list})
+				ORDER BY year DESC"
+			)
+		);
+	}
+} elseif ( $is_all_feeds ) {
+	$years = array_map(
+		'intval',
+		$wpdb->get_col(
+			"SELECT DISTINCT YEAR(post_date) AS year
+			FROM {$wpdb->posts}
+			WHERE post_status = 'publish'
+			AND post_type = 'post'
+			ORDER BY year DESC"
+		)
+	);
+}
+
+if ( empty( $years ) && $CurPageId ) {
+	$term_ids    = array( (int) $CurPageId );
+	$child_terms = get_term_children( $CurPageId, 'category' );
+	if ( ! is_wp_error( $child_terms ) && ! empty( $child_terms ) ) {
+		$term_ids = array_merge( $term_ids, array_map( 'intval', $child_terms ) );
+	}
+	$term_ids = array_unique( $term_ids );
+
+	$placeholders = implode( ',', array_fill( 0, count( $term_ids ), '%d' ) );
+	$years_query  = $wpdb->prepare(
+		"SELECT DISTINCT YEAR(p.post_date) AS year
+		FROM {$wpdb->posts} p
+		INNER JOIN {$wpdb->term_relationships} tr ON (p.ID = tr.object_id)
+		INNER JOIN {$wpdb->term_taxonomy} tt ON (tr.term_taxonomy_id = tt.term_taxonomy_id)
+		WHERE p.post_status = 'publish'
+		AND p.post_type = 'post'
+		AND tt.taxonomy = 'category'
+		AND tt.term_id IN ($placeholders)
+		ORDER BY year DESC",
+		...$term_ids
+	);
+
+	$years = array_map( 'intval', $wpdb->get_col( $years_query ) );
+}
+
+if ( ! empty( $years ) ) {
+	$default_year = max( $years );
+}
+
+$selected_year = isset( $_GET['selected_year'] ) ? (int) $_GET['selected_year'] : $default_year;
 
 $categories = get_categories(array(
     'hide_empty' => 0
@@ -44,7 +162,7 @@ $current_user_plan = get_user_meta($current_user_id, 'arm_user_last_plan', true)
 	<section class="category-nav">
 		<div class="container pos-r site-main">
 			<div class="cat-inner">
-				<div class="news-item">
+				<div class="news-item <?php echo $is_all_feeds ? 'white-triangle-bottom' : ''; ?>">
 					<a href="/feeds" class="darkGray-link">All</a>
 				</div>
 				<?php foreach($categories as $k=>$v){ ?>
@@ -62,8 +180,8 @@ $current_user_plan = get_user_meta($current_user_id, 'arm_user_last_plan', true)
 					
 						<span class="filter-span">Filter by:</span>
 						<select class="filter-select" onchange="window.location.href=this.value;" data-select2-id="1" tabindex="-1" aria-hidden="true">
-							<?php foreach($years as $k=>$v){ ?>
-							<option value="<?php echo $CurPageURL.'?selected_year='.$v; ?>" <?php echo $_GET['selected_year']==$v?'selected':''; ?> ><?php echo $v; ?></option>
+							<?php foreach ( $years as $k => $v ) { ?>
+							<option value="<?php echo esc_url( $CurPageURL . '?selected_year=' . $v ); ?>" <?php echo ( (int) $selected_year === (int) $v ) ? 'selected' : ''; ?>><?php echo esc_html( $v ); ?></option>
 							<?php } ?>
 						</select>
 					
@@ -85,7 +203,7 @@ $current_user_plan = get_user_meta($current_user_id, 'arm_user_last_plan', true)
 					<div class="elementor-widget-wrap elementor-element-populated">
 						<div class="elementor-element elementor-element-c094eb9 elementor-widget elementor-widget-heading" data-id="c094eb9" data-element_type="widget" data-widget_type="heading.default">
 							<div class="elementor-widget-container">
-								<h2 class="elementor-heading-title elementor-size-default">AST Feed - showing <?php echo single_cat_title(); ?> from <?php echo isset($_GET['selected_year'])?$_GET['selected_year']:$years[0]; ?></h2>
+								<h2 class="elementor-heading-title elementor-size-default">AST Feed - showing <?php echo esc_html( $category_title ); ?> from <?php echo esc_html( $selected_year ); ?></h2>
 							</div>
 							
 						</div>
@@ -128,20 +246,24 @@ $current_user_plan = get_user_meta($current_user_id, 'arm_user_last_plan', true)
 									<div id="post-items--64d43de" class="row post-items">
 										<?php
 										
-											$post_year = isset($_GET['selected_year'])?$_GET['selected_year']:$years[0];
+											$post_year = $selected_year;
 											
 											$args = array(
 												'post_type'=> 'post',
-												'category_name' => $CurPageSlug,
 												'orderby'    => 'post_date',
 												'post_status' => 'publish',
 												'order'    => 'DESC',
 												'posts_per_page' => -1,
 												'date_query' => array(
-																'relation' => 'OR',
-																array('year' => $post_year)
-															),
+													'relation' => 'OR',
+													array( 'year' => $post_year ),
+												),
 											);
+
+											if ( $CurPageSlug ) {
+												$args['category_name'] = $CurPageSlug;
+											}
+
 											$result = new WP_Query( $args );
 											if ( $result->have_posts() ) {
 										?>
@@ -242,7 +364,7 @@ $current_user_plan = get_user_meta($current_user_id, 'arm_user_last_plan', true)
 										<div class="elementor-element elementor-element-b64ae75 elementor-align-center elementor-widget elementor-widget-button" data-id="b64ae75" data-element_type="widget" data-widget_type="button.default">
 											<div class="elementor-widget-container">
 													<div class="elementor-button-wrapper">
-														<a href="/memberships/" class="elementor-button-link elementor-button elementor-size-sm" role="button">
+														<a href="/checkout/" class="elementor-button-link elementor-button elementor-size-sm" role="button">
 														<span class="elementor-button-content-wrapper">
 															<span class="elementor-button-text">More membership options</span>
 														</span>

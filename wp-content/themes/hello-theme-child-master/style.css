@@ -97,3 +97,6 @@ ul#menu-about-menu, ul#menu-useful-links, ul.no-style {
 .continue {
     padding: 10px 20px !important;
 }
+.page-content a.elementor-button-link{
+    text-decoration: none;
+}
