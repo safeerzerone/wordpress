@@ -6350,12 +6350,12 @@ function arsenal_settings_cron_schedules( $schedules ) {
 add_filter( 'cron_schedules', 'arsenal_settings_cron_schedules' );
 
 /**
- * Temporarily disable the WC Stripe → ARMember payment log backfill cron.
+ * WC Stripe → ARMember payment log backfill cron.
  *
- * Set to false (or remove the define) to re-enable scheduling.
+ * Set ARSENAL_SETTINGS_DISABLE_WC_STRIPE_ARM_PAYMENT_LOG_CRON to true in wp-config.php to disable.
  */
 if ( ! defined( 'ARSENAL_SETTINGS_DISABLE_WC_STRIPE_ARM_PAYMENT_LOG_CRON' ) ) {
-	define( 'ARSENAL_SETTINGS_DISABLE_WC_STRIPE_ARM_PAYMENT_LOG_CRON', true );
+	define( 'ARSENAL_SETTINGS_DISABLE_WC_STRIPE_ARM_PAYMENT_LOG_CRON', false );
 }
 
 /**
