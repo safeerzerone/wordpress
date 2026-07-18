@@ -4,6 +4,7 @@
  * - `current_arsenal_subscription` — reflects the member's active plan (cleared on cancel).
  * - `arsenal_active_plan` — last assigned/subscribed plan title (unchanged on cancel).
  * - `renewal_date` — next due or expiry from ARMember plan meta (`arm_next_due_payment`, else `arm_expire_plan`; Y-m-d).
+ * - `selected_payment_method` — payment gateway chosen at signup/checkout (card, paypal, woocommerce, …).
  *
  * @package Arsenal_Settings
  */
@@ -37,6 +38,15 @@ function arsenal_settings_arsenal_active_plan_meta_key() {
  */
 function arsenal_settings_renewal_date_meta_key() {
 	return 'renewal_date';
+}
+
+/**
+ * User meta key storing the member's selected payment method / gateway.
+ *
+ * @return string
+ */
+function arsenal_settings_selected_payment_method_meta_key() {
+	return 'selected_payment_method';
 }
 
 /**
@@ -297,6 +307,104 @@ function arsenal_settings_update_renewal_date_meta( $user_id, $preferred_plan_id
 }
 
 /**
+ * Normalize an ARMember / WooCommerce payment gateway slug for `selected_payment_method`.
+ *
+ * Stripe card gateways are stored as `card` (user-facing label); other gateways keep their slug.
+ *
+ * @param string $gateway Raw gateway slug (e.g. stripe, paypal, woocommerce).
+ * @return string Normalized value, or empty when unavailable.
+ */
+function arsenal_settings_normalize_selected_payment_method( $gateway ) {
+	$gateway = strtolower( trim( (string) $gateway ) );
+	if ( $gateway === '' ) {
+		return '';
+	}
+
+	$map = array(
+		'stripe'         => 'card',
+		'stripe_sca'     => 'card',
+		'stripe_connect' => 'card',
+		'paypal'         => 'paypal',
+		'woocommerce'    => 'woocommerce',
+	);
+
+	/**
+	 * Filter the gateway → selected_payment_method map.
+	 *
+	 * @param array<string,string> $map Gateway slug => stored meta value.
+	 */
+	$map = apply_filters( 'arsenal_settings_selected_payment_method_map', $map );
+
+	if ( isset( $map[ $gateway ] ) ) {
+		return (string) $map[ $gateway ];
+	}
+
+	return $gateway;
+}
+
+/**
+ * Resolve `selected_payment_method` from an ARMember plan row's `arm_user_gateway`.
+ *
+ * @param int $user_id            WordPress user ID.
+ * @param int $preferred_plan_id  Plan ID just assigned/changed (optional).
+ * @return string Normalized payment method, or empty when unavailable.
+ */
+function arsenal_settings_resolve_selected_payment_method_for_user( $user_id, $preferred_plan_id = 0 ) {
+	$user_id           = (int) $user_id;
+	$preferred_plan_id = (int) $preferred_plan_id;
+	if ( $user_id < 1 ) {
+		return '';
+	}
+
+	$plan_id = 0;
+	if ( $preferred_plan_id > 0 ) {
+		$plan_id = $preferred_plan_id;
+	} else {
+		$active_plan_ids = arsenal_settings_get_user_active_armember_plan_ids( $user_id );
+		if ( ! empty( $active_plan_ids ) ) {
+			$plan_id = (int) $active_plan_ids[0];
+		}
+	}
+
+	if ( $plan_id < 1 ) {
+		return '';
+	}
+
+	$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+	if ( ! is_array( $plan_data ) || empty( $plan_data['arm_user_gateway'] ) ) {
+		return '';
+	}
+
+	return arsenal_settings_normalize_selected_payment_method( $plan_data['arm_user_gateway'] );
+}
+
+/**
+ * Update `selected_payment_method` from the member's ARMember gateway (or an explicit value).
+ *
+ * @param int         $user_id            WordPress user ID.
+ * @param int         $preferred_plan_id  Plan ID just assigned/changed (optional).
+ * @param string|null $explicit_gateway   When set, store this gateway instead of reading plan meta.
+ */
+function arsenal_settings_update_selected_payment_method_meta( $user_id, $preferred_plan_id = 0, $explicit_gateway = null ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	if ( null !== $explicit_gateway ) {
+		$method = arsenal_settings_normalize_selected_payment_method( $explicit_gateway );
+	} else {
+		$method = arsenal_settings_resolve_selected_payment_method_for_user( $user_id, $preferred_plan_id );
+	}
+
+	if ( $method === '' ) {
+		return;
+	}
+
+	update_user_meta( $user_id, arsenal_settings_selected_payment_method_meta_key(), $method );
+}
+
+/**
  * Normalize ARMember hook plan argument to a single plan ID.
  *
  * @param mixed $plan_id Plan ID or array of plan IDs.
@@ -349,6 +457,7 @@ function arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id ) {
 	arsenal_settings_update_current_arsenal_subscription_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_update_arsenal_active_plan_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_update_renewal_date_meta( $user_id, $normalized_plan_id );
+	arsenal_settings_update_selected_payment_method_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_defer_renewal_date_meta_sync( $user_id, $normalized_plan_id );
 }
 
@@ -362,6 +471,7 @@ function arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id ) {
  * - `current_arsenal_subscription` — recomputed from the user's active plans.
  * - `arsenal_active_plan` — last assigned/subscribed plan title.
  * - `renewal_date` — next membership due date.
+ * - `selected_payment_method` — payment gateway from `arm_user_gateway`.
  *
  * @param int    $meta_id    Meta row ID (unused).
  * @param int    $user_id    WordPress user ID.
@@ -381,6 +491,7 @@ function arsenal_settings_on_arm_user_plan_meta_changed( $meta_id, $user_id, $me
 	arsenal_settings_update_current_arsenal_subscription_meta( $user_id, $plan_id );
 	arsenal_settings_update_arsenal_active_plan_meta( $user_id, $plan_id );
 	arsenal_settings_update_renewal_date_meta( $user_id, $plan_id );
+	arsenal_settings_update_selected_payment_method_meta( $user_id, $plan_id );
 }
 
 /**
@@ -429,6 +540,79 @@ add_action( 'arm_after_update_user_profile', 'arsenal_settings_on_arm_after_upda
 add_action( 'added_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed', 10, 4 );
 add_action( 'updated_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed', 10, 4 );
 add_action( 'arm_after_recurring_payment_success_outside', 'arsenal_settings_on_arm_after_recurring_payment_success_sync_renewal_date', 25, 5 );
+
+/**
+ * Save `selected_payment_method` as soon as the member chooses a gateway on the ARMember setup form.
+ *
+ * @param string               $payment_gateway         Gateway slug (stripe, paypal, woocommerce, …).
+ * @param array<string, mixed> $payment_gateway_options Gateway options (unused).
+ * @param array<string, mixed> $posted_data             Posted signup data.
+ * @param int                  $entry_id                ARMember entry ID (unused).
+ */
+function arsenal_settings_save_selected_payment_method_on_gateway_setup( $payment_gateway, $payment_gateway_options, $posted_data, $entry_id = 0 ) {
+	unset( $payment_gateway_options, $entry_id );
+
+	$user_id = 0;
+	if ( is_array( $posted_data ) ) {
+		if ( ! empty( $posted_data['user_id'] ) ) {
+			$user_id = (int) $posted_data['user_id'];
+		} elseif ( ! empty( $posted_data['arm_user_id'] ) ) {
+			$user_id = (int) $posted_data['arm_user_id'];
+		}
+	}
+	if ( $user_id < 1 && is_user_logged_in() ) {
+		$user_id = (int) get_current_user_id();
+	}
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	arsenal_settings_update_selected_payment_method_meta( $user_id, 0, $payment_gateway );
+}
+add_action( 'arm_payment_gateway_validation_from_setup', 'arsenal_settings_save_selected_payment_method_on_gateway_setup', 15, 4 );
+
+/**
+ * Save `selected_payment_method` from a WooCommerce order's customer (membership / checkout flows).
+ *
+ * When the order came through ARMember's WooCommerce gateway, store `woocommerce`.
+ * Otherwise store the order payment method id (normalized).
+ *
+ * @param int $order_id WooCommerce order ID.
+ */
+function arsenal_settings_save_selected_payment_method_from_wc_order( $order_id ) {
+	$order_id = (int) $order_id;
+	if ( $order_id < 1 || ! function_exists( 'wc_get_order' ) ) {
+		return;
+	}
+
+	$order = wc_get_order( $order_id );
+	if ( ! $order || ! is_a( $order, 'WC_Order' ) ) {
+		return;
+	}
+
+	$user_id = (int) $order->get_user_id();
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$gateway = 'woocommerce';
+	$arm_entry = $order->get_meta( 'arm_entry_id' );
+	if ( empty( $arm_entry ) ) {
+		$arm_entry = $order->get_meta( '_arm_entry_id' );
+	}
+	// Non-ARMember checkout: still record the chosen WC payment method.
+	if ( empty( $arm_entry ) ) {
+		$wc_method = $order->get_payment_method();
+		if ( is_string( $wc_method ) && $wc_method !== '' ) {
+			$gateway = $wc_method;
+		}
+	}
+
+	arsenal_settings_update_selected_payment_method_meta( $user_id, 0, $gateway );
+}
+add_action( 'woocommerce_checkout_order_processed', 'arsenal_settings_save_selected_payment_method_from_wc_order', 25, 1 );
+add_action( 'woocommerce_store_api_checkout_order_processed', 'arsenal_settings_save_selected_payment_method_from_wc_order', 25, 1 );
+add_action( 'woocommerce_payment_complete', 'arsenal_settings_save_selected_payment_method_from_wc_order', 25, 1 );
 
 /**
  * Mirror the ARMember phone meta to a dedicated formatted_phone_number key.
