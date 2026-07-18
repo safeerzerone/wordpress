@@ -5294,6 +5294,10 @@ function arsenal_settings_repair_failed_arm_woocommerce_log_from_stripe( array $
 		)
 	);
 
+	if ( false !== $updated && function_exists( 'arsenal_settings_update_custom_recent_payment_status_meta' ) ) {
+		arsenal_settings_update_custom_recent_payment_status_meta( $user_id, 'success' );
+	}
+
 	return false !== $updated;
 }
 

@@ -5,6 +5,7 @@
  * - `arsenal_active_plan` — last assigned/subscribed plan title (unchanged on cancel).
  * - `renewal_date` — next due or expiry from ARMember plan meta (`arm_next_due_payment`, else `arm_expire_plan`; Y-m-d).
  * - `selected_payment_method` — payment gateway chosen at signup/checkout (card, paypal, woocommerce, …).
+ * - `custom_recent_payment_status` — status of the member's latest payment (default: pending).
  *
  * @package Arsenal_Settings
  */
@@ -47,6 +48,24 @@ function arsenal_settings_renewal_date_meta_key() {
  */
 function arsenal_settings_selected_payment_method_meta_key() {
 	return 'selected_payment_method';
+}
+
+/**
+ * User meta key storing the status of the member's most recent payment.
+ *
+ * @return string
+ */
+function arsenal_settings_custom_recent_payment_status_meta_key() {
+	return 'custom_recent_payment_status';
+}
+
+/**
+ * Default value for `custom_recent_payment_status`.
+ *
+ * @return string
+ */
+function arsenal_settings_custom_recent_payment_status_default() {
+	return 'pending';
 }
 
 /**
@@ -405,6 +424,147 @@ function arsenal_settings_update_selected_payment_method_meta( $user_id, $prefer
 }
 
 /**
+ * Normalize a payment/transaction status for `custom_recent_payment_status`.
+ *
+ * Aligns with ARMember's arm_add_transaction status mapping (plus WooCommerce order statuses).
+ *
+ * @param mixed $status Raw status (string or bank-transfer numeric code).
+ * @return string One of: pending, success, failed, canceled, expired.
+ */
+function arsenal_settings_normalize_custom_recent_payment_status( $status ) {
+	$status = strtolower( trim( (string) $status ) );
+
+	switch ( $status ) {
+		case '1':
+		case 'completed':
+		case 'complete':
+		case 'paid':
+		case 'active':
+		case 'trialing':
+		case 'succeeded':
+		case 'success':
+		case 'processing': // WooCommerce paid/processing.
+		case 'wps_renewal':
+			return 'success';
+		case '0':
+		case 'pending':
+		case 'past_due':
+		case 'on-hold':
+		case 'on_hold':
+			return 'pending';
+		case '2':
+		case 'canceled':
+		case 'cancelled':
+		case 'unpaid':
+		case 'refunded':
+			return 'canceled';
+		case 'failed':
+			return 'failed';
+		case 'expired':
+			return 'expired';
+		default:
+			return $status !== '' ? $status : arsenal_settings_custom_recent_payment_status_default();
+	}
+}
+
+/**
+ * Update `custom_recent_payment_status` for a user.
+ *
+ * @param int    $user_id WordPress user ID.
+ * @param mixed  $status  Raw payment/transaction status.
+ */
+function arsenal_settings_update_custom_recent_payment_status_meta( $user_id, $status ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$normalized = arsenal_settings_normalize_custom_recent_payment_status( $status );
+	update_user_meta( $user_id, arsenal_settings_custom_recent_payment_status_meta_key(), $normalized );
+}
+
+/**
+ * Ensure new users start with `custom_recent_payment_status` = pending.
+ *
+ * @param int $user_id WordPress user ID.
+ */
+function arsenal_settings_init_custom_recent_payment_status_on_register( $user_id ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$existing = get_user_meta( $user_id, arsenal_settings_custom_recent_payment_status_meta_key(), true );
+	if ( '' === $existing || false === $existing || null === $existing ) {
+		arsenal_settings_update_custom_recent_payment_status_meta(
+			$user_id,
+			arsenal_settings_custom_recent_payment_status_default()
+		);
+	}
+}
+add_action( 'user_register', 'arsenal_settings_init_custom_recent_payment_status_on_register', 20 );
+
+/**
+ * Sync `custom_recent_payment_status` from a newly added ARMember payment log.
+ *
+ * @param array<string,mixed> $log_data Payment log row data from arm_add_transaction.
+ */
+function arsenal_settings_on_arm_after_add_transaction_payment_status( $log_data ) {
+	if ( ! is_array( $log_data ) ) {
+		return;
+	}
+
+	$user_id = isset( $log_data['arm_user_id'] ) ? (int) $log_data['arm_user_id'] : 0;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$status = isset( $log_data['arm_transaction_status'] ) ? $log_data['arm_transaction_status'] : '';
+	arsenal_settings_update_custom_recent_payment_status_meta( $user_id, $status );
+}
+add_action( 'arm_after_add_transaction', 'arsenal_settings_on_arm_after_add_transaction_payment_status', 20 );
+
+/**
+ * Mark recent payment success after a recurring payment succeeds.
+ *
+ * @param int   $user_id       WordPress user ID.
+ * @param int   $plan_id       ARMember plan ID (unused).
+ * @param mixed $gateway       Payment gateway (unused).
+ * @param mixed $payment_mode  Payment mode (unused).
+ * @param mixed $user_subsdata Subscription data (unused).
+ */
+function arsenal_settings_on_arm_recurring_payment_success_status( $user_id, $plan_id = 0, $gateway = '', $payment_mode = '', $user_subsdata = null ) {
+	unset( $plan_id, $gateway, $payment_mode, $user_subsdata );
+	arsenal_settings_update_custom_recent_payment_status_meta( (int) $user_id, 'success' );
+}
+add_action( 'arm_after_recurring_payment_success_outside', 'arsenal_settings_on_arm_recurring_payment_success_status', 30, 5 );
+
+/**
+ * Bank transfer accepted → success.
+ *
+ * @param int $user_id WordPress user ID.
+ * @param int $plan_id ARMember plan ID (unused).
+ * @param int $log_id  Payment log ID (unused).
+ */
+function arsenal_settings_on_arm_bank_transfer_accepted_status( $user_id, $plan_id = 0, $log_id = 0 ) {
+	unset( $plan_id, $log_id );
+	arsenal_settings_update_custom_recent_payment_status_meta( (int) $user_id, 'success' );
+}
+add_action( 'arm_after_accept_bank_transfer_payment', 'arsenal_settings_on_arm_bank_transfer_accepted_status', 20, 3 );
+
+/**
+ * Bank transfer declined → failed.
+ *
+ * @param int $user_id WordPress user ID.
+ * @param int $plan_id ARMember plan ID (unused).
+ */
+function arsenal_settings_on_arm_bank_transfer_declined_status( $user_id, $plan_id = 0 ) {
+	unset( $plan_id );
+	arsenal_settings_update_custom_recent_payment_status_meta( (int) $user_id, 'failed' );
+}
+add_action( 'arm_after_decline_bank_transfer_payment', 'arsenal_settings_on_arm_bank_transfer_declined_status', 20, 2 );
+
+/**
  * Normalize ARMember hook plan argument to a single plan ID.
  *
  * @param mixed $plan_id Plan ID or array of plan IDs.
@@ -568,6 +728,11 @@ function arsenal_settings_save_selected_payment_method_on_gateway_setup( $paymen
 	}
 
 	arsenal_settings_update_selected_payment_method_meta( $user_id, 0, $payment_gateway );
+	// Payment just started — keep recent status as pending until a transaction settles.
+	arsenal_settings_update_custom_recent_payment_status_meta(
+		$user_id,
+		arsenal_settings_custom_recent_payment_status_default()
+	);
 }
 add_action( 'arm_payment_gateway_validation_from_setup', 'arsenal_settings_save_selected_payment_method_on_gateway_setup', 15, 4 );
 
@@ -609,10 +774,40 @@ function arsenal_settings_save_selected_payment_method_from_wc_order( $order_id 
 	}
 
 	arsenal_settings_update_selected_payment_method_meta( $user_id, 0, $gateway );
+	arsenal_settings_update_custom_recent_payment_status_meta( $user_id, $order->get_status() );
 }
 add_action( 'woocommerce_checkout_order_processed', 'arsenal_settings_save_selected_payment_method_from_wc_order', 25, 1 );
 add_action( 'woocommerce_store_api_checkout_order_processed', 'arsenal_settings_save_selected_payment_method_from_wc_order', 25, 1 );
 add_action( 'woocommerce_payment_complete', 'arsenal_settings_save_selected_payment_method_from_wc_order', 25, 1 );
+
+/**
+ * Keep `custom_recent_payment_status` in sync when a WooCommerce order status changes.
+ *
+ * @param int      $order_id WooCommerce order ID.
+ * @param string   $from     Previous status (unused).
+ * @param string   $to       New status.
+ * @param WC_Order $order    Order object (optional).
+ */
+function arsenal_settings_save_custom_recent_payment_status_on_wc_status_change( $order_id, $from, $to, $order = null ) {
+	unset( $from );
+
+	$user_id = 0;
+	if ( $order && is_a( $order, 'WC_Order' ) ) {
+		$user_id = (int) $order->get_user_id();
+	} elseif ( function_exists( 'wc_get_order' ) ) {
+		$fetched = wc_get_order( (int) $order_id );
+		if ( $fetched && is_a( $fetched, 'WC_Order' ) ) {
+			$user_id = (int) $fetched->get_user_id();
+		}
+	}
+
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	arsenal_settings_update_custom_recent_payment_status_meta( $user_id, $to );
+}
+add_action( 'woocommerce_order_status_changed', 'arsenal_settings_save_custom_recent_payment_status_on_wc_status_change', 25, 4 );
 
 /**
  * Mirror the ARMember phone meta to a dedicated formatted_phone_number key.
