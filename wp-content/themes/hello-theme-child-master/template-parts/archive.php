@@ -366,7 +366,7 @@ $current_user_plan = get_user_meta($current_user_id, 'arm_user_last_plan', true)
 													<div class="elementor-button-wrapper">
 														<a href="/checkout/" class="elementor-button-link elementor-button elementor-size-sm" role="button">
 														<span class="elementor-button-content-wrapper">
-															<span class="elementor-button-text">More membership options</span>
+															<span class="elementor-button-text">Membership options</span>
 														</span>
 													</a>
 												</div>
