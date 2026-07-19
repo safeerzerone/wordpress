@@ -451,6 +451,10 @@ function arsenal_settings_normalize_custom_recent_payment_status( $status ) {
 		case 'past_due':
 		case 'on-hold':
 		case 'on_hold':
+		case 'requires_action': // Stripe PaymentIntent awaiting SCA / 3DS.
+		case 'requires_confirmation':
+		case 'requires_payment_method':
+		case 'incomplete':
 			return 'pending';
 		case '2':
 		case 'canceled':
@@ -505,6 +509,110 @@ function arsenal_settings_init_custom_recent_payment_status_on_register( $user_i
 add_action( 'user_register', 'arsenal_settings_init_custom_recent_payment_status_on_register', 20 );
 
 /**
+ * Read the latest visible ARMember payment-log status for a user.
+ *
+ * @param int $user_id WordPress user ID.
+ * @return string Empty string when no log is found.
+ */
+function arsenal_settings_get_latest_arm_payment_log_status( $user_id ) {
+	global $wpdb;
+
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 || ! function_exists( 'arsenal_settings_get_armember_payment_log_table' ) ) {
+		return '';
+	}
+
+	$table = arsenal_settings_get_armember_payment_log_table();
+	if ( '' === $table ) {
+		return '';
+	}
+
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+	$status = $wpdb->get_var(
+		$wpdb->prepare(
+			"SELECT `arm_transaction_status` FROM `{$table}` WHERE `arm_user_id` = %d AND `arm_display_log` = %d ORDER BY `arm_log_id` DESC LIMIT 1",
+			$user_id,
+			1
+		)
+	);
+
+	return is_string( $status ) ? $status : '';
+}
+
+/**
+ * Sync `custom_recent_payment_status` from the user's latest ARMember payment log.
+ *
+ * Needed for Stripe SCA card flows: ARMember often creates a pending log, then later
+ * flips it to success with a raw `$wpdb->update` that does not fire `arm_after_add_transaction`.
+ *
+ * @param int $user_id WordPress user ID.
+ * @return bool True when a status was applied from a payment log.
+ */
+function arsenal_settings_sync_custom_recent_payment_status_from_latest_log( $user_id ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return false;
+	}
+
+	$status = arsenal_settings_get_latest_arm_payment_log_status( $user_id );
+	if ( '' === $status ) {
+		return false;
+	}
+
+	arsenal_settings_update_custom_recent_payment_status_meta( $user_id, $status );
+	return true;
+}
+
+/**
+ * Resolve a WordPress user ID from an ARMember entry ID (Stripe SCA AJAX payloads).
+ *
+ * @param int $entry_id ARMember entry ID.
+ * @return int
+ */
+function arsenal_settings_resolve_user_id_from_arm_entry( $entry_id ) {
+	global $wpdb, $ARMember, $ARMemberLite;
+
+	$entry_id = (int) $entry_id;
+	if ( $entry_id < 1 ) {
+		return 0;
+	}
+
+	$entries_table = '';
+	if ( is_object( $ARMember ) && ! empty( $ARMember->tbl_arm_entries ) ) {
+		$entries_table = $ARMember->tbl_arm_entries;
+	} elseif ( is_object( $ARMemberLite ) && ! empty( $ARMemberLite->tbl_arm_entries ) ) {
+		$entries_table = $ARMemberLite->tbl_arm_entries;
+	} else {
+		$entries_table = $wpdb->prefix . 'arm_entries';
+	}
+
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember global/prefix helper.
+	$row = $wpdb->get_row(
+		$wpdb->prepare(
+			"SELECT `arm_user_id`, `arm_entry_email` FROM `{$entries_table}` WHERE `arm_entry_id` = %d LIMIT 1",
+			$entry_id
+		),
+		ARRAY_A
+	);
+	if ( ! is_array( $row ) ) {
+		return 0;
+	}
+
+	$user_id = isset( $row['arm_user_id'] ) ? (int) $row['arm_user_id'] : 0;
+	if ( $user_id > 0 ) {
+		return $user_id;
+	}
+
+	$email = isset( $row['arm_entry_email'] ) ? sanitize_email( (string) $row['arm_entry_email'] ) : '';
+	if ( '' === $email ) {
+		return 0;
+	}
+
+	$user = get_user_by( 'email', $email );
+	return ( $user && ! empty( $user->ID ) ) ? (int) $user->ID : 0;
+}
+
+/**
  * Sync `custom_recent_payment_status` from a newly added ARMember payment log.
  *
  * @param array<string,mixed> $log_data Payment log row data from arm_add_transaction.
@@ -523,6 +631,89 @@ function arsenal_settings_on_arm_after_add_transaction_payment_status( $log_data
 	arsenal_settings_update_custom_recent_payment_status_meta( $user_id, $status );
 }
 add_action( 'arm_after_add_transaction', 'arsenal_settings_on_arm_after_add_transaction_payment_status', 20 );
+
+/**
+ * Stripe SCA / card completion path that stores a log without always re-firing add_transaction.
+ *
+ * @param int $payment_log_id ARMember payment log ID.
+ */
+function arsenal_settings_on_arm_after_completing_transaction_payment_status( $payment_log_id ) {
+	global $wpdb;
+
+	$payment_log_id = (int) $payment_log_id;
+	if ( $payment_log_id < 1 || ! function_exists( 'arsenal_settings_get_armember_payment_log_table' ) ) {
+		return;
+	}
+
+	$table = arsenal_settings_get_armember_payment_log_table();
+	if ( '' === $table ) {
+		return;
+	}
+
+	// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from ARMember helper.
+	$row = $wpdb->get_row(
+		$wpdb->prepare(
+			"SELECT `arm_user_id`, `arm_transaction_status` FROM `{$table}` WHERE `arm_log_id` = %d LIMIT 1",
+			$payment_log_id
+		),
+		ARRAY_A
+	);
+	if ( ! is_array( $row ) ) {
+		return;
+	}
+
+	$user_id = isset( $row['arm_user_id'] ) ? (int) $row['arm_user_id'] : 0;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$status = isset( $row['arm_transaction_status'] ) ? $row['arm_transaction_status'] : '';
+	arsenal_settings_update_custom_recent_payment_status_meta( $user_id, $status );
+}
+add_action( 'arm_after_completing_transaction', 'arsenal_settings_on_arm_after_completing_transaction_payment_status', 20 );
+
+/**
+ * After Stripe SCA AJAX charge handlers exit, re-read payment log status.
+ *
+ * ARMember's SCA success path often updates pending → success via `$wpdb->update`
+ * (no `arm_after_add_transaction`), then redirects to the payment success page.
+ */
+function arsenal_settings_register_stripe_sca_payment_status_shutdown_sync() {
+	if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) {
+		return;
+	}
+
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only action name gate for shutdown sync.
+	$action = isset( $_REQUEST['action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['action'] ) ) : '';
+	$sca_actions = array(
+		'arm_stripe_made_charge',
+		'arm_stripe_made_charge_onetime',
+		'arm_stripe_made_update_card',
+	);
+	if ( ! in_array( $action, $sca_actions, true ) ) {
+		return;
+	}
+
+	add_action(
+		'shutdown',
+		static function () {
+			$user_id = 0;
+			if ( is_user_logged_in() ) {
+				$user_id = (int) get_current_user_id();
+			}
+			if ( $user_id < 1 ) {
+				// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Entry id only used to resolve user for meta sync.
+				$entry_id = isset( $_REQUEST['entry_id'] ) ? absint( wp_unslash( $_REQUEST['entry_id'] ) ) : 0;
+				$user_id  = arsenal_settings_resolve_user_id_from_arm_entry( $entry_id );
+			}
+			if ( $user_id > 0 ) {
+				arsenal_settings_sync_custom_recent_payment_status_from_latest_log( $user_id );
+			}
+		},
+		5
+	);
+}
+add_action( 'init', 'arsenal_settings_register_stripe_sca_payment_status_shutdown_sync', 1 );
 
 /**
  * Mark recent payment success after a recurring payment succeeds.
