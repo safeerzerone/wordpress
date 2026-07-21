@@ -4,7 +4,7 @@
  * - `current_arsenal_subscription` — reflects the member's active plan (cleared on cancel).
  * - `arsenal_active_plan` — last assigned/subscribed plan title (unchanged on cancel).
  * - `renewal_date` — next due or expiry from ARMember plan meta (`arm_next_due_payment`, else `arm_expire_plan`; Y-m-d).
- * - `selected_payment_method` — payment gateway chosen at signup/checkout (card, paypal, woocommerce, …).
+ * - `selected_payment_method` — payment gateway chosen at signup/checkout (card, paypal, Bank Direct Debit, …).
  * - `custom_recent_payment_status` — status of the member's latest payment (default: pending).
  *
  * @package Arsenal_Settings
@@ -13,6 +13,72 @@
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
+
+/**
+ * User-facing label for ARMember's WooCommerce payment gateway (emails, dashboard, meta).
+ *
+ * @return string
+ */
+function arsenal_settings_woocommerce_gateway_display_label() {
+	return 'Bank Direct Debit';
+}
+
+/**
+ * Show "Bank Direct Debit" instead of "WooCommerce" wherever ARMember resolves gateway names
+ * (transaction emails, member/admin dashboards, invoices, etc.).
+ *
+ * @param array<string,string> $gateway_names Gateway key => display name.
+ * @return array<string,string>
+ */
+function arsenal_settings_arm_filter_gateway_names_woocommerce_label( $gateway_names ) {
+	if ( ! is_array( $gateway_names ) ) {
+		$gateway_names = array();
+	}
+	$gateway_names['woocommerce'] = __( 'Bank Direct Debit', 'arsenal-settings' );
+	return $gateway_names;
+}
+add_filter( 'arm_filter_gateway_names', 'arsenal_settings_arm_filter_gateway_names_woocommerce_label', 20 );
+
+/**
+ * Fallback when a caller passes the raw key through `arm_gateway_name_by_key`.
+ *
+ * @param string $pg_name     Resolved display name.
+ * @param string $gateway_key Gateway key.
+ * @return string
+ */
+function arsenal_settings_arm_gateway_name_by_key_woocommerce_label( $pg_name, $gateway_key ) {
+	if ( 'woocommerce' === strtolower( trim( (string) $gateway_key ) ) ) {
+		return __( 'Bank Direct Debit', 'arsenal-settings' );
+	}
+	return $pg_name;
+}
+add_filter( 'arm_gateway_name_by_key', 'arsenal_settings_arm_gateway_name_by_key_woocommerce_label', 20, 2 );
+
+/**
+ * One-time: rewrite stored `selected_payment_method` from "woocommerce" to "Bank Direct Debit".
+ */
+function arsenal_settings_migrate_selected_payment_method_woocommerce_label() {
+	if ( get_option( 'arsenal_settings_migrated_wc_payment_method_label', false ) ) {
+		return;
+	}
+
+	global $wpdb;
+	$meta_key = arsenal_settings_selected_payment_method_meta_key();
+	$label    = arsenal_settings_woocommerce_gateway_display_label();
+
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- one-time usermeta label rewrite.
+	$wpdb->query(
+		$wpdb->prepare(
+			"UPDATE {$wpdb->usermeta} SET meta_value = %s WHERE meta_key = %s AND meta_value = %s",
+			$label,
+			$meta_key,
+			'woocommerce'
+		)
+	);
+
+	update_option( 'arsenal_settings_migrated_wc_payment_method_label', 1, false );
+}
+add_action( 'init', 'arsenal_settings_migrate_selected_payment_method_woocommerce_label', 5 );
 
 /**
  * User meta key storing the current membership title (plain string).
@@ -328,7 +394,7 @@ function arsenal_settings_update_renewal_date_meta( $user_id, $preferred_plan_id
 /**
  * Normalize an ARMember / WooCommerce payment gateway slug for `selected_payment_method`.
  *
- * Stripe card gateways are stored as `card` (user-facing label); other gateways keep their slug.
+ * Stripe card gateways are stored as `card` (user-facing label); WooCommerce gateway as Bank Direct Debit.
  *
  * @param string $gateway Raw gateway slug (e.g. stripe, paypal, woocommerce).
  * @return string Normalized value, or empty when unavailable.
@@ -344,7 +410,7 @@ function arsenal_settings_normalize_selected_payment_method( $gateway ) {
 		'stripe_sca'     => 'card',
 		'stripe_connect' => 'card',
 		'paypal'         => 'paypal',
-		'woocommerce'    => 'woocommerce',
+		'woocommerce'    => arsenal_settings_woocommerce_gateway_display_label(),
 	);
 
 	/**
@@ -930,7 +996,7 @@ add_action( 'arm_payment_gateway_validation_from_setup', 'arsenal_settings_save_
 /**
  * Save `selected_payment_method` from a WooCommerce order's customer (membership / checkout flows).
  *
- * When the order came through ARMember's WooCommerce gateway, store `woocommerce`.
+ * When the order came through ARMember's WooCommerce gateway, store Bank Direct Debit.
  * Otherwise store the order payment method id (normalized).
  *
  * @param int $order_id WooCommerce order ID.
