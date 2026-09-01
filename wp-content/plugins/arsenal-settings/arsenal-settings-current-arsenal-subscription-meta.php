@@ -5,6 +5,7 @@
  * - `arsenal_active_plan` — last assigned/subscribed plan title (unchanged on cancel).
  * - `renewal_date` — next due or expiry from ARMember plan meta (`arm_next_due_payment`, else `arm_expire_plan`; Y-m-d).
  * - `selected_payment_method` — payment gateway chosen at signup/checkout (card, paypal, Bank Direct Debit, …).
+ * - `selected_payment_type` — plan Setup Type: Recurring (subscription) or Single Year (paid finite).
  * - `custom_recent_payment_status` — status of the member's latest payment (default: pending).
  *
  * @package Arsenal_Settings
@@ -114,6 +115,33 @@ function arsenal_settings_renewal_date_meta_key() {
  */
 function arsenal_settings_selected_payment_method_meta_key() {
 	return 'selected_payment_method';
+}
+
+/**
+ * User meta key storing the member's selected subscription type.
+ *
+ * @return string
+ */
+function arsenal_settings_selected_payment_type_meta_key() {
+	return 'selected_payment_type';
+}
+
+/**
+ * Stored value for members billed automatically each term.
+ *
+ * @return string
+ */
+function arsenal_settings_selected_payment_type_recurring_label() {
+	return 'Recurring';
+}
+
+/**
+ * Stored value for members who paid once for a single term.
+ *
+ * @return string
+ */
+function arsenal_settings_selected_payment_type_single_year_label() {
+	return 'Single Year';
 }
 
 /**
@@ -487,6 +515,114 @@ function arsenal_settings_update_selected_payment_method_meta( $user_id, $prefer
 	}
 
 	update_user_meta( $user_id, arsenal_settings_selected_payment_method_meta_key(), $method );
+}
+
+/**
+ * Map an ARMember plan Setup Type to a `selected_payment_type` value.
+ *
+ * Setup Type "Subscription / Recurring Payment" is stored as `recurring`; "Paid Plan (finite)"
+ * is stored as `paid_finite`. Free and lifetime (`paid_infinite`) plans are neither, so they
+ * yield an empty string and leave the meta untouched.
+ *
+ * @param string $plan_type ARMember `arm_subscription_plan_type`.
+ * @return string Meta value, or empty string when the type is not billable per term.
+ */
+function arsenal_settings_map_armember_plan_type_to_selected_payment_type( $plan_type ) {
+	$plan_type = strtolower( trim( (string) $plan_type ) );
+
+	switch ( $plan_type ) {
+		case 'recurring':
+			return arsenal_settings_selected_payment_type_recurring_label();
+		case 'paid_finite':
+			return arsenal_settings_selected_payment_type_single_year_label();
+		default:
+			return '';
+	}
+}
+
+/**
+ * Read an ARMember plan's Setup Type.
+ *
+ * Prefers the live plan record; falls back to the Setup Type snapshotted onto the member's
+ * plan row, which is what remains available if the plan is later edited or deleted.
+ *
+ * @param int $plan_id ARMember plan ID.
+ * @param int $user_id WordPress user ID, used for the plan-row fallback (optional).
+ * @return string Setup Type, or empty string when it cannot be read.
+ */
+function arsenal_settings_get_armember_plan_type( $plan_id, $user_id = 0 ) {
+	$plan_id = (int) $plan_id;
+	$user_id = (int) $user_id;
+	if ( $plan_id < 1 ) {
+		return '';
+	}
+
+	if ( class_exists( 'ARM_Plan' ) ) {
+		$plan = new ARM_Plan( $plan_id );
+		if ( ! empty( $plan->ID ) && ! empty( $plan->type ) ) {
+			return (string) $plan->type;
+		}
+	}
+
+	if ( $user_id > 0 ) {
+		$plan_data = get_user_meta( $user_id, 'arm_user_plan_' . $plan_id, true );
+		if ( is_array( $plan_data ) && ! empty( $plan_data['arm_current_plan_detail']['arm_subscription_plan_type'] ) ) {
+			return (string) $plan_data['arm_current_plan_detail']['arm_subscription_plan_type'];
+		}
+	}
+
+	return '';
+}
+
+/**
+ * Resolve `selected_payment_type` for a member from the plan's Setup Type.
+ *
+ * @param int $user_id           WordPress user ID.
+ * @param int $preferred_plan_id Plan ID just assigned/changed (optional).
+ * @return string Meta value, or empty string when it cannot be determined.
+ */
+function arsenal_settings_resolve_selected_payment_type_for_user( $user_id, $preferred_plan_id = 0 ) {
+	$user_id           = (int) $user_id;
+	$preferred_plan_id = (int) $preferred_plan_id;
+	if ( $user_id < 1 ) {
+		return '';
+	}
+
+	$plan_id = $preferred_plan_id;
+	if ( $plan_id < 1 ) {
+		$active_plan_ids = arsenal_settings_get_user_active_armember_plan_ids( $user_id );
+		if ( ! empty( $active_plan_ids ) ) {
+			$plan_id = (int) $active_plan_ids[0];
+		}
+	}
+
+	if ( $plan_id < 1 ) {
+		return '';
+	}
+
+	return arsenal_settings_map_armember_plan_type_to_selected_payment_type(
+		arsenal_settings_get_armember_plan_type( $plan_id, $user_id )
+	);
+}
+
+/**
+ * Update `selected_payment_type` from the Setup Type of the member's plan.
+ *
+ * @param int $user_id           WordPress user ID.
+ * @param int $preferred_plan_id Plan ID just assigned/changed (optional).
+ */
+function arsenal_settings_update_selected_payment_type_meta( $user_id, $preferred_plan_id = 0 ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$type = arsenal_settings_resolve_selected_payment_type_for_user( $user_id, $preferred_plan_id );
+	if ( '' === $type ) {
+		return;
+	}
+
+	update_user_meta( $user_id, arsenal_settings_selected_payment_type_meta_key(), $type );
 }
 
 /**
@@ -875,6 +1011,7 @@ function arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id ) {
 	arsenal_settings_update_arsenal_active_plan_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_update_renewal_date_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_update_selected_payment_method_meta( $user_id, $normalized_plan_id );
+	arsenal_settings_update_selected_payment_type_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_defer_renewal_date_meta_sync( $user_id, $normalized_plan_id );
 }
 
@@ -909,6 +1046,7 @@ function arsenal_settings_on_arm_user_plan_meta_changed( $meta_id, $user_id, $me
 	arsenal_settings_update_arsenal_active_plan_meta( $user_id, $plan_id );
 	arsenal_settings_update_renewal_date_meta( $user_id, $plan_id );
 	arsenal_settings_update_selected_payment_method_meta( $user_id, $plan_id );
+	arsenal_settings_update_selected_payment_type_meta( $user_id, $plan_id );
 }
 
 /**
@@ -959,7 +1097,8 @@ add_action( 'updated_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed
 add_action( 'arm_after_recurring_payment_success_outside', 'arsenal_settings_on_arm_after_recurring_payment_success_sync_renewal_date', 25, 5 );
 
 /**
- * Save `selected_payment_method` as soon as the member chooses a gateway on the ARMember setup form.
+ * Save `selected_payment_method` and `selected_payment_type` as soon as the member chooses a
+ * gateway and billing mode on the ARMember setup form.
  *
  * @param string               $payment_gateway         Gateway slug (stripe, paypal, woocommerce, …).
  * @param array<string, mixed> $payment_gateway_options Gateway options (unused).
@@ -985,6 +1124,17 @@ function arsenal_settings_save_selected_payment_method_on_gateway_setup( $paymen
 	}
 
 	arsenal_settings_update_selected_payment_method_meta( $user_id, 0, $payment_gateway );
+
+	$selected_plan_id = 0;
+	if ( is_array( $posted_data ) ) {
+		if ( ! empty( $posted_data['subscription_plan'] ) ) {
+			$selected_plan_id = (int) $posted_data['subscription_plan'];
+		} elseif ( ! empty( $posted_data['_subscription_plan'] ) ) {
+			$selected_plan_id = (int) $posted_data['_subscription_plan'];
+		}
+	}
+	arsenal_settings_update_selected_payment_type_meta( $user_id, $selected_plan_id );
+
 	// Payment just started — keep recent status as pending until a transaction settles.
 	arsenal_settings_update_custom_recent_payment_status_meta(
 		$user_id,
