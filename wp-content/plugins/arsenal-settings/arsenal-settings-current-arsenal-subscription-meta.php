@@ -7,6 +7,7 @@
  * - `selected_payment_method` — payment gateway chosen at signup/checkout (card, paypal, Bank Direct Debit, …).
  * - `selected_payment_type` — plan Setup Type: Recurring (subscription) or Single Year (paid finite).
  * - `custom_recent_payment_status` — status of the member's latest payment (default: pending).
+ * - `user_membership_status` — membership lifecycle: pending (signup / awaiting payment), active (paid & not suspended), cancelled (suspended for payment pending or failure).
  *
  * @package Arsenal_Settings
  */
@@ -160,6 +161,92 @@ function arsenal_settings_custom_recent_payment_status_meta_key() {
  */
 function arsenal_settings_custom_recent_payment_status_default() {
 	return 'pending';
+}
+
+/**
+ * User meta key storing the member's overall membership status.
+ *
+ * @return string
+ */
+function arsenal_settings_user_membership_status_meta_key() {
+	return 'user_membership_status';
+}
+
+/**
+ * Default value for `user_membership_status`.
+ *
+ * @return string
+ */
+function arsenal_settings_user_membership_status_default() {
+	return 'pending';
+}
+
+/**
+ * Allowed stored values for `user_membership_status`.
+ *
+ * @return array<int,string>
+ */
+function arsenal_settings_user_membership_status_allowed_values() {
+	return array( 'pending', 'active', 'cancelled' );
+}
+
+/**
+ * Resolve `user_membership_status` from ARMember plan state and recent payment status.
+ *
+ * - cancelled — at least one plan is in `arm_user_suspended_plan_ids` (payment pending/failure suspension).
+ * - active    — has an active plan (not suspended/cancelled/expired) and latest payment is successful.
+ * - pending   — everything else (new signup, checkout in progress, awaiting first payment).
+ *
+ * @param int $user_id WordPress user ID.
+ * @return string One of: pending, active, cancelled.
+ */
+function arsenal_settings_resolve_user_membership_status( $user_id ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return arsenal_settings_user_membership_status_default();
+	}
+
+	$suspended = get_user_meta( $user_id, 'arm_user_suspended_plan_ids', true );
+	$suspended = is_array( $suspended ) ? array_filter( array_map( 'intval', $suspended ) ) : array();
+	if ( ! empty( $suspended ) ) {
+		return 'cancelled';
+	}
+
+	$active_plan_ids = arsenal_settings_get_user_active_armember_plan_ids( $user_id );
+	if ( empty( $active_plan_ids ) ) {
+		return arsenal_settings_user_membership_status_default();
+	}
+
+	$payment_status = get_user_meta( $user_id, arsenal_settings_custom_recent_payment_status_meta_key(), true );
+	$payment_status = is_string( $payment_status ) ? strtolower( trim( $payment_status ) ) : '';
+	if ( '' === $payment_status ) {
+		$payment_status = arsenal_settings_custom_recent_payment_status_default();
+	}
+
+	if ( 'success' === $payment_status ) {
+		return 'active';
+	}
+
+	return arsenal_settings_user_membership_status_default();
+}
+
+/**
+ * Update `user_membership_status` for a user.
+ *
+ * @param int $user_id WordPress user ID.
+ */
+function arsenal_settings_update_user_membership_status_meta( $user_id ) {
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	$status = arsenal_settings_resolve_user_membership_status( $user_id );
+	if ( ! in_array( $status, arsenal_settings_user_membership_status_allowed_values(), true ) ) {
+		$status = arsenal_settings_user_membership_status_default();
+	}
+
+	update_user_meta( $user_id, arsenal_settings_user_membership_status_meta_key(), $status );
 }
 
 /**
@@ -687,6 +774,7 @@ function arsenal_settings_update_custom_recent_payment_status_meta( $user_id, $s
 
 	$normalized = arsenal_settings_normalize_custom_recent_payment_status( $status );
 	update_user_meta( $user_id, arsenal_settings_custom_recent_payment_status_meta_key(), $normalized );
+	arsenal_settings_update_user_membership_status_meta( $user_id );
 }
 
 /**
@@ -706,6 +794,11 @@ function arsenal_settings_init_custom_recent_payment_status_on_register( $user_i
 			$user_id,
 			arsenal_settings_custom_recent_payment_status_default()
 		);
+	}
+
+	$membership_status = get_user_meta( $user_id, arsenal_settings_user_membership_status_meta_key(), true );
+	if ( '' === $membership_status || false === $membership_status || null === $membership_status ) {
+		update_user_meta( $user_id, arsenal_settings_user_membership_status_meta_key(), arsenal_settings_user_membership_status_default() );
 	}
 }
 add_action( 'user_register', 'arsenal_settings_init_custom_recent_payment_status_on_register', 20 );
@@ -1013,6 +1106,7 @@ function arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id ) {
 	arsenal_settings_update_selected_payment_method_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_update_selected_payment_type_meta( $user_id, $normalized_plan_id );
 	arsenal_settings_defer_renewal_date_meta_sync( $user_id, $normalized_plan_id );
+	arsenal_settings_update_user_membership_status_meta( $user_id );
 }
 
 /**
@@ -1047,6 +1141,30 @@ function arsenal_settings_on_arm_user_plan_meta_changed( $meta_id, $user_id, $me
 	arsenal_settings_update_renewal_date_meta( $user_id, $plan_id );
 	arsenal_settings_update_selected_payment_method_meta( $user_id, $plan_id );
 	arsenal_settings_update_selected_payment_type_meta( $user_id, $plan_id );
+	arsenal_settings_update_user_membership_status_meta( $user_id );
+}
+
+/**
+ * Sync `user_membership_status` when ARMember suspension list changes.
+ *
+ * @param int    $meta_id    Meta row ID (unused).
+ * @param int    $user_id    WordPress user ID.
+ * @param string $meta_key   User meta key.
+ * @param mixed  $meta_value Meta value (unused).
+ */
+function arsenal_settings_on_arm_user_suspended_plan_ids_changed( $meta_id, $user_id, $meta_key, $meta_value ) {
+	unset( $meta_id, $meta_value );
+
+	if ( 'arm_user_suspended_plan_ids' !== $meta_key ) {
+		return;
+	}
+
+	$user_id = (int) $user_id;
+	if ( $user_id < 1 ) {
+		return;
+	}
+
+	arsenal_settings_update_user_membership_status_meta( $user_id );
 }
 
 /**
@@ -1068,6 +1186,7 @@ function arsenal_settings_on_arm_after_recurring_payment_success_sync_renewal_da
  */
 function arsenal_settings_on_armember_plan_removed( $user_id ) {
 	arsenal_settings_update_current_arsenal_subscription_meta( $user_id, 0 );
+	arsenal_settings_update_user_membership_status_meta( $user_id );
 }
 
 /**
@@ -1094,6 +1213,8 @@ add_action( 'arm_after_cancel_subscription', 'arsenal_settings_on_arm_after_canc
 add_action( 'arm_after_update_user_profile', 'arsenal_settings_on_arm_after_update_user_profile', 99, 2 );
 add_action( 'added_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed', 10, 4 );
 add_action( 'updated_user_meta', 'arsenal_settings_on_arm_user_plan_meta_changed', 10, 4 );
+add_action( 'added_user_meta', 'arsenal_settings_on_arm_user_suspended_plan_ids_changed', 10, 4 );
+add_action( 'updated_user_meta', 'arsenal_settings_on_arm_user_suspended_plan_ids_changed', 10, 4 );
 add_action( 'arm_after_recurring_payment_success_outside', 'arsenal_settings_on_arm_after_recurring_payment_success_sync_renewal_date', 25, 5 );
 
 /**
@@ -1140,6 +1261,7 @@ function arsenal_settings_save_selected_payment_method_on_gateway_setup( $paymen
 		$user_id,
 		arsenal_settings_custom_recent_payment_status_default()
 	);
+	arsenal_settings_update_user_membership_status_meta( $user_id );
 }
 add_action( 'arm_payment_gateway_validation_from_setup', 'arsenal_settings_save_selected_payment_method_on_gateway_setup', 15, 4 );
 
