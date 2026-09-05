@@ -22,24 +22,141 @@ function hello_elementor_child_enqueue_scripts() {
 }
 add_action( 'wp_enqueue_scripts', 'hello_elementor_child_enqueue_scripts', 20 );
 
+/**
+ * Whether a country value represents the UK.
+ *
+ * Handles ARMember ISO codes (GB), labels (United Kingdom), and numeric IDs.
+ *
+ * @param mixed $country Country code, label, or ARMember numeric id.
+ * @return bool
+ */
+function arsenal_is_uk_country( $country ) {
+	if ( $country === null || $country === '' ) {
+		return false;
+	}
+
+	$country = trim( wp_strip_all_tags( (string) $country ) );
+	$normalized = strtoupper( $country );
+
+	$uk_exact = array( 'GB', 'UK', 'GBR', '198', 'UNITED KINGDOM', 'UNITED KINGDOM (UK)' );
+	if ( in_array( $normalized, $uk_exact, true ) ) {
+		return true;
+	}
+
+	// Label variants such as "United Kingdom (UK):GB".
+	if ( false !== stripos( $country, 'United Kingdom' ) ) {
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * Set Overseas (radio_djeo5) from the user's country.
+ * UK => N (No), otherwise => Y (Yes).
+ *
+ * @param int   $user_id     User ID.
+ * @param array $posted_data Optional posted registration/profile data.
+ * @return void
+ */
+function arsenal_set_overseas_from_country( $user_id, $posted_data = array() ) {
+	$user_id = (int) $user_id;
+	if ( $user_id <= 0 ) {
+		return;
+	}
+
+	$country = '';
+	if ( is_array( $posted_data ) && isset( $posted_data['country'] ) && $posted_data['country'] !== '' ) {
+		$country = $posted_data['country'];
+	} else {
+		$country = get_user_meta( $user_id, 'country', true );
+	}
+
+	if ( $country === '' || $country === null ) {
+		return;
+	}
+
+	$overseas = arsenal_is_uk_country( $country ) ? 'N' : 'Y';
+	update_user_meta( $user_id, 'radio_djeo5', $overseas );
+}
+
+add_action( 'arm_after_add_new_user', 'arsenal_set_overseas_from_country', 20, 2 );
+add_action( 'arm_member_update_meta', 'arsenal_set_overseas_from_country', 20, 2 );
+add_action(
+	'user_register',
+	function( $user_id ) {
+		arsenal_set_overseas_from_country( $user_id );
+	},
+	20
+);
+
 function add_this_script_footer(){
 ?>
 
 <script>
 	jQuery(document).ready(function(){
-		//select if overseas based on country
-		jQuery('.country-formfield-ar .arm-df__form-field > div > input.arm-selectpicker-input-control').change(function(){
-			//console.log( jQuery(this).val() );
-			if ( jQuery(this).val() == "GB" ) {
-				jQuery("input[name=radio_djeo5][value='Y']").prop( "checked", false );
-				jQuery("input[name=radio_djeo5][value='N']").prop("checked", true);
-			} else {
-				jQuery("input[name=radio_djeo5][value='N']").prop("checked", false);
-				jQuery("input[name=radio_djeo5][value='Y']").prop("checked", true);
+		function arsenalIsUkCountry(value) {
+			if (value === undefined || value === null) {
+				return false;
 			}
-			var $boxes = jQuery('input[name=radio_djeo5]:checked');
-			//console.log( $boxes );
+			var country = String(value).trim();
+			if (!country) {
+				return false;
+			}
+			var normalized = country.toUpperCase();
+			var ukExact = ['GB', 'UK', 'GBR', '198', 'UNITED KINGDOM', 'UNITED KINGDOM (UK)'];
+			if (ukExact.indexOf(normalized) !== -1) {
+				return true;
+			}
+			return /united kingdom/i.test(country);
+		}
+
+		function arsenalSetOverseasFromCountry(countryValue) {
+			var isUk = arsenalIsUkCountry(countryValue);
+			var $yes = jQuery("input[name=radio_djeo5][value='Y']");
+			var $no = jQuery("input[name=radio_djeo5][value='N']");
+
+			// Fallback if options are stored as Yes/No instead of Y/N.
+			if (!$yes.length) {
+				$yes = jQuery("input[name=radio_djeo5][value='Yes']");
+			}
+			if (!$no.length) {
+				$no = jQuery("input[name=radio_djeo5][value='No']");
+			}
+
+			if (isUk) {
+				$yes.prop('checked', false);
+				$no.prop('checked', true).trigger('change');
+			} else {
+				$no.prop('checked', false);
+				$yes.prop('checked', true).trigger('change');
+			}
+		}
+
+		function arsenalGetCountryInput() {
+			return jQuery('.country-formfield-ar input.arm-selectpicker-input-control[name="country"], input.arm-selectpicker-input-control[name="country"]').first();
+		}
+
+		// Sync Overseas whenever country changes (direct change + ARMember dropdown click).
+		jQuery(document).on('change', '.country-formfield-ar input.arm-selectpicker-input-control, input.arm-selectpicker-input-control[name="country"]', function(){
+			arsenalSetOverseasFromCountry(jQuery(this).val());
 		});
+
+		jQuery(document).on('click', '.country-formfield-ar .arm__dc--item, .arm-df__form-group_select .arm__dc--item', function(){
+			var $group = jQuery(this).closest('.arm-df__form-group');
+			var isCountryField = $group.hasClass('country-formfield-ar') || $group.find('input[name="country"]').length;
+			if (!isCountryField) {
+				return;
+			}
+			var countryValue = jQuery(this).attr('data-value');
+			arsenalSetOverseasFromCountry(countryValue);
+		});
+
+		// Apply once on load in case country already has a value.
+		var $countryInput = arsenalGetCountryInput();
+		if ($countryInput.length && $countryInput.val()) {
+			arsenalSetOverseasFromCountry($countryInput.val());
+		}
 		
 		// Functionality for subscription plan and payment option selection
 		jQuery('#annual-membership').click(function(){
