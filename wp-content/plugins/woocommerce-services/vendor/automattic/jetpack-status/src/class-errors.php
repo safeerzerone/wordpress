@@ -40,9 +40,7 @@ class Errors {
 		} else {
 			// Restore the original values for error reporting and output.
 			@ini_set( 'display_errors', $display_errors );
-			if ( $error_reporting !== null ) {
-				@error_reporting( $error_reporting );
-			}
+			@error_reporting( $error_reporting );
 			if ( class_exists( 'Jetpack' ) ) {
 				remove_action( 'shutdown', array( 'Jetpack', 'catch_errors_on_shutdown' ), 0 );
 			}

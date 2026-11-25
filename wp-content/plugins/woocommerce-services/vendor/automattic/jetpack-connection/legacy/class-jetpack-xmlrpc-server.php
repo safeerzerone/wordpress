@@ -304,8 +304,7 @@ class Jetpack_XMLRPC_Server {
 		$nonce = sanitize_text_field( $request['nonce'] );
 		unset( $request['nonce'] );
 
-		$api_url = $this->connection->api_url( 'partner_provision_nonce_check' );
-		// @phan-suppress-next-line PhanAccessMethodInternal -- Phan is correct, but the usage is intentional.
+		$api_url  = $this->connection->api_url( 'partner_provision_nonce_check' );
 		$response = Client::_wp_remote_request(
 			esc_url_raw( add_query_arg( 'nonce', $nonce, $api_url ) ),
 			array( 'method' => 'GET' ),
@@ -716,12 +715,11 @@ class Jetpack_XMLRPC_Server {
 			'md5',
 			json_encode( // phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode
 				(object) array(
-					'client_id' => $client_id,
-					'user_id'   => $user_id,
-					'nonce'     => $nonce,
+					'client_id' => (int) $client_id,
+					'user_id'   => (int) $user_id,
+					'nonce'     => (string) $nonce,
 					'code'      => (string) $api_user_code,
-				),
-				0 // phpcs:ignore Jetpack.Functions.JsonEncodeFlags.ZeroFound -- No `json_encode()` flags because this needs to match whatever is calculating the hash on the other end.
+				)
 			),
 			$jetpack_token->secret
 		);

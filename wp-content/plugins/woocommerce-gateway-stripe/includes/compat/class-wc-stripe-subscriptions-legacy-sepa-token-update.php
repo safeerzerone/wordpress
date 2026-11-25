@@ -51,7 +51,6 @@ class WC_Stripe_Subscriptions_Legacy_SEPA_Token_Update {
 	 *
 	 * @param int $subscription_id The ID of the subscription to update.
 	 * @throws \Exception When updating the payment method of the subscription was skipped.
-	 * @return void
 	 */
 	public function maybe_update_subscription_legacy_payment_method( $subscription_id ) {
 		$subscription = $this->get_subscription_to_migrate( $subscription_id );
@@ -67,7 +66,6 @@ class WC_Stripe_Subscriptions_Legacy_SEPA_Token_Update {
 	 * Attempts to update the payment method for renewals from Sources to PaymentMethods.
 	 *
 	 * @param WC_Subscription $subscription The subscription for which the payment method must be updated.
-	 * @return void
 	 */
 	public function maybe_update_subscription_source( WC_Subscription $subscription ) {
 		try {
@@ -115,7 +113,6 @@ class WC_Stripe_Subscriptions_Legacy_SEPA_Token_Update {
 	 *
 	 * @param WC_Subscription $subscription The subscription to update.
 	 * @throws \Exception When the subscription is already using a pm_ or its src_ hasn't been migrated to a pm_.
-	 * @return void
 	 */
 	private function set_subscription_updated_payment_method( WC_Subscription $subscription ) {
 		$source_id = $subscription->get_meta( self::SOURCE_ID_META_KEY );
@@ -153,7 +150,6 @@ class WC_Stripe_Subscriptions_Legacy_SEPA_Token_Update {
 	 * Sets the updated SEPA gateway ID for the subscription.
 	 *
 	 * @param WC_Subscription $subscription Subscription for which the payment method must be updated.
-	 * @return void
 	 */
 	private function set_subscription_updated_payment_gateway_id( WC_Subscription $subscription ) {
 		// The subscription is not using the legacy SEPA gateway ID.

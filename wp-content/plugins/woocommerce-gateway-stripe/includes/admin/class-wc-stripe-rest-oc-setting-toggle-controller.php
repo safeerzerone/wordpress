@@ -34,8 +34,6 @@ class WC_Stripe_REST_OC_Setting_Toggle_Controller extends WC_Stripe_REST_Base_Co
 
 	/**
 	 * Configure REST API routes.
-	 *
-	 * @return void
 	 */
 	public function register_routes() {
 		register_rest_route(
@@ -82,8 +80,6 @@ class WC_Stripe_REST_OC_Setting_Toggle_Controller extends WC_Stripe_REST_Base_Co
 	 * Update the data.
 	 *
 	 * @param WP_REST_Request $request Full data about the request.
-	 *
-	 * @return WP_REST_Response
 	 */
 	public function set_setting( WP_REST_Request $request ) {
 		$is_oc_enabled = $request->get_param( 'is_oc_enabled' );

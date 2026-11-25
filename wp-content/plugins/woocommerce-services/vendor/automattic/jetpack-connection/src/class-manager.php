@@ -10,7 +10,6 @@ namespace Automattic\Jetpack\Connection;
 use Automattic\Jetpack\A8c_Mc_Stats;
 use Automattic\Jetpack\Constants;
 use Automattic\Jetpack\Heartbeat;
-use Automattic\Jetpack\Identity_Crisis;
 use Automattic\Jetpack\Partner;
 use Automattic\Jetpack\Roles;
 use Automattic\Jetpack\Status;
@@ -32,7 +31,7 @@ class Manager {
 	/**
 	 * A copy of the raw POST data for signature verification purposes.
 	 *
-	 * @var string
+	 * @var String
 	 */
 	protected $raw_post_data;
 
@@ -87,14 +86,6 @@ class Manager {
 	 * @var bool|null True if the site is connected, false if not, null if not determined yet.
 	 */
 	private static $is_connected = null;
-
-	/**
-	 * Memoized user ID of the connection owner.
-	 * If undefined or invalid, set to 0.
-	 *
-	 * @var null|int
-	 */
-	private static $connection_owner_id = null;
 
 	/**
 	 * Tracks whether connection status invalidation hooks have been added.
@@ -207,7 +198,6 @@ class Manager {
 		add_action( 'pre_update_jetpack_option_blog_token', array( $this, 'reset_connection_status' ) );
 		add_action( 'pre_update_jetpack_option_user_token', array( $this, 'reset_connection_status' ) );
 		add_action( 'pre_update_jetpack_option_user_tokens', array( $this, 'reset_connection_status' ) );
-		add_action( 'pre_update_jetpack_option_master_user', array( $this, 'reset_connection_status' ) );
 		// phpcs:ignore WPCUT.SwitchBlog.SwitchBlog -- wpcom flags **every** use of switch_blog, apparently expecting valid instances to ignore or suppress the sniff.
 		add_action( 'switch_blog', array( $this, 'reset_connection_status' ) );
 
@@ -279,7 +269,7 @@ class Manager {
 			// Hack to preserve $HTTP_RAW_POST_DATA.
 			add_filter( 'xmlrpc_methods', array( $this, 'xmlrpc_methods' ) );
 
-		} elseif ( $has_connected_owner ) {
+		} elseif ( $has_connected_owner && ! $is_signed ) {
 			// The jetpack.authorize method should be available for unauthenticated users on a site with an
 			// active Jetpack connection, so that additional users can link their account.
 			$callback = array( $this->xmlrpc_server, 'authorize_xmlrpc_methods' );
@@ -379,10 +369,10 @@ class Manager {
 	/**
 	 * Authenticates XML-RPC and other requests from the Jetpack Server
 	 *
-	 * @param WP_User|mixed $user user object if authenticated.
-	 * @param string        $username username.
-	 * @param string        $password password string.
-	 * @return WP_User|mixed authenticated user or error.
+	 * @param WP_User|Mixed $user user object if authenticated.
+	 * @param String        $username username.
+	 * @param String        $password password string.
+	 * @return WP_User|Mixed authenticated user or error.
 	 */
 	public function authenticate_jetpack( $user, $username, $password ) { // phpcs:ignore VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable
 		if ( is_a( $user, '\\WP_User' ) ) {
@@ -452,13 +442,6 @@ class Manager {
 			return false;
 		}
 
-		// Skip XML-RPC signature verification for OAuth authorization flow.
-		// OAuth uses GET requests without body-hash and has its own
-		// signature verification in Authorize_Json_Api class.
-		if ( isset( $_GET['action'] ) && $_GET['action'] === 'jetpack_json_api_authorization' ) {
-			return false;
-		}
-
 		$signature_details = array(
 			'token'     => isset( $_GET['token'] ) ? wp_unslash( $_GET['token'] ) : '',
 			'timestamp' => isset( $_GET['timestamp'] ) ? wp_unslash( $_GET['timestamp'] ) : '',
@@ -500,7 +483,7 @@ class Manager {
 			$user_id = (int) $user_id;
 
 			$user = new \WP_User( $user_id );
-			if ( ! $user->exists() ) {
+			if ( ! $user || ! $user->exists() ) {
 				return new \WP_Error(
 					'unknown_user',
 					sprintf( 'User %d does not exist', $user_id ),
@@ -623,7 +606,7 @@ class Manager {
 	 *
 	 * @deprecated 1.25.0
 	 * @see Manager::has_connected_owner
-	 * @return bool is the site connected?
+	 * @return Boolean is the site connected?
 	 */
 	public function is_active() {
 		return (bool) $this->get_tokens()->get_access_token( true );
@@ -668,7 +651,8 @@ class Manager {
 
 			$has_blog_id = (bool) \Jetpack_Options::get_option( 'id' );
 			if ( $has_blog_id ) {
-				self::$is_connected = (bool) $this->get_tokens()->get_access_token();
+				$has_blog_token     = (bool) $this->get_tokens()->get_access_token();
+				self::$is_connected = ( $has_blog_id && $has_blog_token );
 			} else {
 				// Short-circuit, no need to check for tokens if there's no blog ID.
 				self::$is_connected = false;
@@ -684,8 +668,7 @@ class Manager {
 	 * @since 5.0.0
 	 */
 	public function reset_connection_status() {
-		self::$is_connected        = null;
-		self::$connection_owner_id = null;
+		self::$is_connected = null;
 	}
 
 	/**
@@ -829,14 +812,8 @@ class Manager {
 	 * @return bool|int Returns the ID of the connection owner or False if no connection owner found.
 	 */
 	public function get_connection_owner_id() {
-		// Check if the memoized value is available.
-		if ( null === self::$connection_owner_id ) {
-			$owner                     = $this->get_connection_owner();
-			self::$connection_owner_id = $owner instanceof \WP_User ? $owner->ID : 0;
-		}
-
-		// If the ID is set to 0, there's no valid connection owner.
-		return self::$connection_owner_id > 0 ? self::$connection_owner_id : false;
+		$owner = $this->get_connection_owner();
+		return $owner instanceof \WP_User ? $owner->ID : false;
 	}
 
 	/**
@@ -844,7 +821,7 @@ class Manager {
 	 *
 	 * @todo Refactor to properly load the XMLRPC client independently.
 	 *
-	 * @param int|null $user_id the user identifier.
+	 * @param Integer $user_id the user identifier.
 	 * @return bool|array An array with the WPCOM user data on success, false otherwise.
 	 */
 	public function get_connected_user_data( $user_id = null ) {
@@ -886,7 +863,9 @@ class Manager {
 	 * @return WP_User|false False if no connection owner found.
 	 */
 	public function get_connection_owner() {
+
 		$user_id = \Jetpack_Options::get_option( 'master_user' );
+
 		if ( ! $user_id ) {
 			return false;
 		}
@@ -926,8 +905,8 @@ class Manager {
 	 * Returns true if the provided user is the Jetpack connection owner.
 	 * If user ID is not specified, the current user will be used.
 	 *
-	 * @param int|bool $user_id the user identifier. False for current user.
-	 * @return bool True the user the connection owner, false otherwise.
+	 * @param Integer|Boolean $user_id the user identifier. False for current user.
+	 * @return Boolean True the user the connection owner, false otherwise.
 	 */
 	public function is_connection_owner( $user_id = false ) {
 		if ( ! $user_id ) {
@@ -943,9 +922,9 @@ class Manager {
 	 *
 	 * @access public
 	 *
-	 * @param int|null    $user_id (optional) the user identifier, defaults to current user.
-	 * @param string|null $redirect_url the URL to redirect the user to for processing, defaults to
-	 *                             admin_url().
+	 * @param Integer $user_id (optional) the user identifier, defaults to current user.
+	 * @param String  $redirect_url the URL to redirect the user to for processing, defaults to
+	 *                              admin_url().
 	 * @return WP_Error only in case of a failed user lookup.
 	 */
 	public function connect_user( $user_id = null, $redirect_url = null ) {
@@ -1022,10 +1001,10 @@ class Manager {
 	 *
 	 * @todo Refactor to properly load the XMLRPC client independently.
 	 *
-	 * @param int|null $user_id the user identifier.
-	 * @param bool     $can_overwrite_primary_user Allow for the primary user to be disconnected.
-	 * @param bool     $force_disconnect_locally Disconnect user locally even if we were unable to disconnect them from WP.com.
-	 * @return bool Whether the disconnection of the user was successful.
+	 * @param Integer $user_id the user identifier.
+	 * @param bool    $can_overwrite_primary_user Allow for the primary user to be disconnected.
+	 * @param bool    $force_disconnect_locally Disconnect user locally even if we were unable to disconnect them from WP.com.
+	 * @return Boolean Whether the disconnection of the user was successful.
 	 */
 	public function disconnect_user( $user_id = null, $can_overwrite_primary_user = false, $force_disconnect_locally = false ) {
 		$user_id         = empty( $user_id ) ? get_current_user_id() : (int) $user_id;
@@ -1075,9 +1054,6 @@ class Manager {
 
 				if ( $is_primary_user ) {
 					Jetpack_Options::delete_option( 'master_user' );
-
-					// Clear the memoized connection owner ID since it changed
-					self::$connection_owner_id = null;
 				}
 			}
 		}
@@ -1111,7 +1087,7 @@ class Manager {
 	 *
 	 * @since 1.29.0
 	 *
-	 * @param int $new_owner_id The ID of the user to become the connection owner.
+	 * @param Integer $new_owner_id The ID of the user to become the connection owner.
 	 *
 	 * @return true|WP_Error True if owner successfully changed, WP_Error otherwise.
 	 */
@@ -1151,9 +1127,6 @@ class Manager {
 			// This will ensure consistency with WPCOM.
 			\Jetpack_Options::update_option( 'master_user', $new_owner_id );
 
-			// Clear the memoized connection owner ID since it changed
-			self::$connection_owner_id = null;
-
 			// Track it.
 			( new Tracking() )->record_user_event( 'set_connection_owner_success' );
 
@@ -1171,9 +1144,9 @@ class Manager {
 	 *
 	 * @since 1.29.0
 	 *
-	 * @param int $new_owner_id The ID of the user to become the connection owner.
+	 * @param Integer $new_owner_id The ID of the user to become the connection owner.
 	 *
-	 * @return bool Whether the ownership transfer was successful.
+	 * @return Boolean Whether the ownership transfer was successful.
 	 */
 	public function update_connection_owner_wpcom( $new_owner_id ) {
 		// Notify WPCOM about the connection owner change.
@@ -1198,8 +1171,8 @@ class Manager {
 	/**
 	 * Returns the requested Jetpack API URL.
 	 *
-	 * @param string $relative_url the relative API path.
-	 * @return string API URL.
+	 * @param String $relative_url the relative API path.
+	 * @return String API URL.
 	 */
 	public function api_url( $relative_url ) {
 		$api_base    = Constants::get_constant( 'JETPACK__API_BASE' );
@@ -1211,10 +1184,10 @@ class Manager {
 		 * @since 1.7.0
 		 * @since-jetpack 8.0.0
 		 *
-		 * @param string $url the generated URL.
-		 * @param string $relative_url the relative URL that was passed as an argument.
-		 * @param string $api_base the API base string that is being used.
-		 * @param string $api_version the API version string that is being used.
+		 * @param String $url the generated URL.
+		 * @param String $relative_url the relative URL that was passed as an argument.
+		 * @param String $api_base the API base string that is being used.
+		 * @param String $api_version the API version string that is being used.
 		 */
 		return apply_filters(
 			'jetpack_api_url',
@@ -1228,7 +1201,7 @@ class Manager {
 	/**
 	 * Returns the Jetpack XMLRPC WordPress.com API endpoint URL.
 	 *
-	 * @return string XMLRPC API URL.
+	 * @return String XMLRPC API URL.
 	 */
 	public function xmlrpc_api_url() {
 		$base = preg_replace(
@@ -1244,7 +1217,7 @@ class Manager {
 	 * remain public because the call to action comes from the current site, not from
 	 * WordPress.com.
 	 *
-	 * @param string $api_endpoint (optional) an API endpoint to use, defaults to 'register'.
+	 * @param String $api_endpoint (optional) an API endpoint to use, defaults to 'register'.
 	 * @return true|WP_Error The error object.
 	 */
 	public function register( $api_endpoint = 'register' ) {
@@ -1500,7 +1473,7 @@ class Manager {
 	 * @since 1.7.0
 	 * @since-jetpack 2.6.0
 	 *
-	 * @param mixed $response the response object, or the error object.
+	 * @param Mixed $response the response object, or the error object.
 	 * @return string|WP_Error A JSON object on success or WP_Error on failures
 	 **/
 	protected function validate_remote_register_response( $response ) {
@@ -1679,7 +1652,7 @@ class Manager {
 	 *
 	 * @since 1.7.0
 	 * @since-jetpack 5.4.0
-	 * @param int $min_timeout the minimum timeout value.
+	 * @param Integer $min_timeout the minimum timeout value.
 	 **/
 	public function set_min_time_limit( $min_timeout ) {
 		$timeout = $this->get_max_execution_time();
@@ -1755,16 +1728,16 @@ class Manager {
 	 * @return array $amended arguments.
 	 */
 	public static function apply_activation_source_to_args( $args ) {
-		$activation_source = get_option( 'jetpack_activation_source' );
+		list( $activation_source_name, $activation_source_keyword ) = get_option( 'jetpack_activation_source' );
 
-		if ( ! empty( $activation_source[0] ) ) {
+		if ( $activation_source_name ) {
 			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.urlencode_urlencode
-			$args['_as'] = urlencode( $activation_source[0] );
+			$args['_as'] = urlencode( $activation_source_name );
 		}
 
-		if ( ! empty( $activation_source[1] ) ) {
+		if ( $activation_source_keyword ) {
 			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.urlencode_urlencode
-			$args['_ak'] = urlencode( $activation_source[1] );
+			$args['_ak'] = urlencode( $activation_source_keyword );
 		}
 
 		return $args;
@@ -1773,9 +1746,9 @@ class Manager {
 	/**
 	 * Generates two secret tokens and the end of life timestamp for them.
 	 *
-	 * @param string   $action  The action name.
-	 * @param int|bool $user_id The user identifier.
-	 * @param int      $exp     Expiration time in seconds.
+	 * @param String  $action  The action name.
+	 * @param Integer $user_id The user identifier.
+	 * @param Integer $exp     Expiration time in seconds.
 	 */
 	public function generate_secrets( $action, $user_id = false, $exp = 600 ) {
 		return ( new Secrets() )->generate( $action, $user_id, $exp );
@@ -1786,8 +1759,8 @@ class Manager {
 	 *
 	 * @deprecated 1.24.0 Use Automattic\Jetpack\Connection\Secrets->get() instead.
 	 *
-	 * @param string $action  The action name.
-	 * @param int    $user_id The user identifier.
+	 * @param String  $action  The action name.
+	 * @param Integer $user_id The user identifier.
 	 * @return string|array an array of secrets or an error string.
 	 */
 	public function get_secrets( $action, $user_id ) {
@@ -1800,8 +1773,8 @@ class Manager {
 	 *
 	 * @deprecated 1.24.0 Use Automattic\Jetpack\Connection\Secrets->delete() instead.
 	 *
-	 * @param string $action  The action name.
-	 * @param int    $user_id The user identifier.
+	 * @param String  $action  The action name.
+	 * @param Integer $user_id The user identifier.
 	 */
 	public function delete_secrets( $action, $user_id ) {
 		_deprecated_function( __METHOD__, '1.24.0', 'Automattic\\Jetpack\\Connection\\Secrets->delete' );
@@ -1842,9 +1815,6 @@ class Manager {
 				'fallback_no_verify_ssl_certs',
 			)
 		);
-
-		// Clear the memoized connection owner ID since it changed
-		self::$connection_owner_id = null;
 
 		( new Secrets() )->delete_all();
 		$this->get_tokens()->delete_all();
@@ -2778,8 +2748,6 @@ class Manager {
 		}
 
 		$stats['jetpack_package_versions'] = apply_filters( 'jetpack_package_versions', array() );
-
-		$stats['identitycrisis'] = Identity_Crisis::check_identity_crisis() ? 'yes' : 'no';
 
 		return $stats;
 	}

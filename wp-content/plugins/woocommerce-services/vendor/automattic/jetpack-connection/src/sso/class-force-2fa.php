@@ -14,9 +14,7 @@ use Automattic\Jetpack\Modules;
 use WP_Error;
 
 /**
- * Force users to use two-factor authentication.
- *
- * @phan-constructor-used-for-side-effects
+ * Force users to use two factor authentication.
  */
 class Force_2FA {
 	/**

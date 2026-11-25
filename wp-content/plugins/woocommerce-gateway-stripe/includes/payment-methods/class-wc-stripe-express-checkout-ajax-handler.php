@@ -46,8 +46,6 @@ class WC_Stripe_Express_Checkout_Ajax_Handler {
 
 	/**
 	 * Get cart details.
-	 *
-	 * @return void
 	 */
 	public function ajax_get_cart_details() {
 		check_ajax_referer( 'wc-stripe-get-cart-details', 'security' );
@@ -139,8 +137,6 @@ class WC_Stripe_Express_Checkout_Ajax_Handler {
 
 	/**
 	 * Clears cart.
-	 *
-	 * @return void
 	 */
 	public function ajax_clear_cart() {
 		check_ajax_referer( 'wc-stripe-clear-cart', 'security' );
@@ -161,8 +157,6 @@ class WC_Stripe_Express_Checkout_Ajax_Handler {
 
 	/**
 	 * Normalizes address fields in WooCommerce supported format.
-	 *
-	 * @return void
 	 */
 	public function ajax_normalize_address() {
 		check_ajax_referer( 'wc-stripe-express-checkout-normalize-address', 'security' );
@@ -196,8 +190,6 @@ class WC_Stripe_Express_Checkout_Ajax_Handler {
 	 * @see WC_Cart::get_shipping_packages().
 	 * @see WC_Shipping::calculate_shipping().
 	 * @see WC_Shipping::get_packages().
-	 *
-	 * @return void
 	 */
 	public function ajax_get_shipping_options() {
 		check_ajax_referer( 'wc-stripe-express-checkout-shipping', 'security' );
@@ -222,8 +214,6 @@ class WC_Stripe_Express_Checkout_Ajax_Handler {
 
 	/**
 	 * Update shipping method.
-	 *
-	 * @return void
 	 */
 	public function ajax_update_shipping_method() {
 		check_ajax_referer( 'wc-stripe-update-shipping-method', 'security' );
@@ -353,8 +343,6 @@ class WC_Stripe_Express_Checkout_Ajax_Handler {
 
 	/**
 	 * Log errors coming from express checkout elements
-	 *
-	 * @return void
 	 */
 	public function ajax_log_errors() {
 		check_ajax_referer( 'wc-stripe-log-errors', 'security' );
@@ -373,8 +361,6 @@ class WC_Stripe_Express_Checkout_Ajax_Handler {
 	 * Processes the Pay for Order AJAX request from the Express Checkout.
 	 *
 	 * @deprecated 9.2.0 Payment is processed using the Blocks API by default.
-	 *
-	 * @return void
 	 */
 	public function ajax_pay_for_order() {
 		_deprecated_function( __METHOD__, '9.2.0' );

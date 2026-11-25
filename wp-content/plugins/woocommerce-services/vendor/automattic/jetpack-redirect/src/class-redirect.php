@@ -70,7 +70,9 @@ class Redirect {
 
 		}
 
-		$url = add_query_arg( $to_be_added, $url );
+		if ( ! empty( $to_be_added ) ) {
+			$url = add_query_arg( $to_be_added, $url );
+		}
 
 		return $url;
 	}

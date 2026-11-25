@@ -949,9 +949,7 @@ class WC_Stripe_Customer {
 	/**
 	 * Set default source in Stripe
 	 *
-	 * @param string $source_id The ID of the source to set as default.
-	 * @return bool True if the default source was set successfully, false otherwise.
-	 * @throws WC_Stripe_Exception
+	 * @param string $source_id
 	 */
 	public function set_default_source( $source_id ) {
 		$response = WC_Stripe_API::request(
@@ -963,9 +961,7 @@ class WC_Stripe_Customer {
 		);
 
 		if ( empty( $response->error ) ) {
-			// Clear cache so that the payment methods list from Stripe is refreshed to have the correct default payment method.
 			$this->clear_cache();
-
 			do_action( 'wc_stripe_set_default_source', $this->get_id(), $response );
 
 			return true;
@@ -977,9 +973,7 @@ class WC_Stripe_Customer {
 	/**
 	 * Set default payment method in Stripe
 	 *
-	 * @param string $payment_method_id The ID of the payment method to set as default.
-	 * @return bool True if the default payment method was set successfully, false otherwise.
-	 * @throws WC_Stripe_Exception
+	 * @param string $payment_method_id
 	 */
 	public function set_default_payment_method( $payment_method_id ) {
 		$response = WC_Stripe_API::request(
@@ -993,9 +987,7 @@ class WC_Stripe_Customer {
 		);
 
 		if ( empty( $response->error ) ) {
-			// Clear cache so that the payment methods list from Stripe is refreshed to have the correct default payment method.
 			$this->clear_cache();
-
 			do_action( 'wc_stripe_set_default_payment_method', $this->get_id(), $response );
 
 			return true;
