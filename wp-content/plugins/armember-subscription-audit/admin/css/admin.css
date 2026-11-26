@@ -1,0 +1,17 @@
+.armsa-filters { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.armsa-count { margin: 6px 0; color: #50575e; }
+.armsa-table td, .armsa-table th { word-wrap: break-word; }
+.armsa-break { word-break: break-all; }
+.armsa-kv th { width: 260px; }
+.armsa-summary { background: #fff; border: 1px solid #c3c4c7; padding: 4px 16px; max-width: 900px; }
+.armsa-list { margin: 0 0 8px 20px; list-style: disc; }
+.armsa-group { margin: 8px 0; }
+.armsa-badge, .armsa-pay { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 12px; line-height: 1.6; background: #f0f0f1; color: #1d2327; }
+.armsa-badge-subscription_linked { background: #d1e7dd; color: #0a3622; }
+.armsa-badge-subscription_id_missing { background: #fff3cd; color: #664d03; }
+.armsa-badge-no_recurring_information { background: #e2e3e5; color: #41464b; }
+.armsa-badge-payment_history_missing { background: #ffe5d0; color: #6c3000; }
+.armsa-badge-last_payment_failed { background: #f8d7da; color: #58151c; }
+.armsa-badge-needs_investigation { background: #e0cffc; color: #3d1a78; }
+.armsa-pay-success { background: #d1e7dd; color: #0a3622; }
+.armsa-pay-failed { background: #f8d7da; color: #58151c; }
