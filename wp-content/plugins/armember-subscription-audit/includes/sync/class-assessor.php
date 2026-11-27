@@ -33,6 +33,16 @@ final class Assessor {
 		$found    = $adapter->discover( $facts );
 		$log( 'Local information discovery', Status::STEP_COMPLETED, count( $found ) . ' field(s) have at least one stored value.' );
 
+		// ---- Payment type: only recurring plans are ever looked up or synchronised -----------------
+		$ptype = self::payment_type( $facts );
+		if ( 'recurring' !== $ptype['type'] ) {
+			$opts['lookup'] = false;
+			$log( 'Payment type identified', Status::STEP_COMPLETED, $ptype['label'] . ' – ' . $ptype['reason'] );
+			$log( 'Gateway lookup', Status::STEP_SKIPPED, 'Skipped: only recurring membership plans are synchronised with a payment gateway.' );
+		} else {
+			$log( 'Payment type identified', Status::STEP_COMPLETED, $ptype['label'] . ' – ' . $ptype['reason'] );
+		}
+
 		// ---- Optional read-only gateway lookup -------------------------------------------------
 		$gateway = Gateway_Adapter::empty_lookup();
 		if ( ! empty( $opts['lookup'] ) && isset( $opts['http'], $opts['secrets'] ) && $adapter->id() !== 'unsupported' ) {
@@ -65,6 +75,21 @@ final class Assessor {
 		$log( 'ARMember renewal readiness determined', Status::ARM_VERIFIED === $arm['status'] || Status::ARM_COMPLETE === $arm['status'] ? Status::STEP_COMPLETED : Status::STEP_WARNING, $arm['label'] . ': ' . $arm['explain'] );
 
 		$overall = $this->overall( $adapter, $gw, $arm, $props );
+		if ( 'recurring' !== $ptype['type'] ) {
+			$one   = 'one_time' === $ptype['type'];
+			$gw    = array( 'status' => Status::GW_NA, 'label' => 'Not applicable', 'explain' => $ptype['reason'] );
+			$arm   = array( 'status' => Status::ARM_NA, 'label' => 'Not applicable', 'explain' => $ptype['reason'], 'checks' => array() );
+			$props = array();
+			$overall = $one
+				? array( 'status' => Status::OV_NOT_APPLICABLE, 'label' => Status::label( 'overall', Status::OV_NOT_APPLICABLE ), 'action' => $ptype['reason'] . ' Nothing to synchronise with a payment gateway.' )
+				: array( 'status' => Status::OV_REVIEW, 'label' => Status::label( 'overall', Status::OV_REVIEW ), 'action' => $ptype['reason'] );
+			foreach ( $fields as $k => $f ) {
+				$fields[ $k ]['actions'] = array( 'view' );
+				if ( ! in_array( $f['store'], array( 'wordpress', 'armember' ), true ) || ! empty( $f['verify'] ) ) {
+					$fields[ $k ]['required'] = false;
+				}
+			}
+		}
 		$log( 'Assessment completed', Status::STEP_COMPLETED, $overall['label'] . ' – ' . $overall['action'] );
 
 		$missing = array();
@@ -75,6 +100,7 @@ final class Assessor {
 		}
 
 		return array(
+			'payment_type' => $ptype,
 			'model'      => $adapter->id(),
 			'model_label' => $adapter->label(),
 			'fields'     => $fields,
@@ -82,11 +108,34 @@ final class Assessor {
 			'arm'        => $arm,
 			'overall'    => $overall,
 			'proposals'  => $props,
-			'missing'    => $missing,
+			'missing'    => 'recurring' === $ptype['type'] ? $missing : array(),
 			'candidates' => $gateway['candidates'],
 			'lookup'     => array( 'attempted' => $gateway['attempted'], 'error' => $gateway['error'], 'sub_status' => $gateway['sub_status'], 'sub_detail' => $gateway['sub_detail'], 'ownership' => $gateway['ownership'], 'ownership_note' => $gateway['ownership_note'] ),
 			'assessed_at' => time(),
 		);
+	}
+
+	/**
+	 * Recurring vs one-time, from the plan DEFINITION (authoritative), not from member meta.
+	 *
+	 * @return array { type: recurring|one_time|undetermined, label, reason }
+	 */
+	public static function payment_type( array $facts ) {
+		$kind = isset( $facts['plan_kind'] ) ? $facts['plan_kind'] : 'unknown';
+		$mode = isset( $facts['meta']['mode'] ) ? (string) $facts['meta']['mode'] : '';
+		$rec_mode = in_array( $mode, array( 'auto_debit_subscription', 'manual_subscription' ), true );
+		if ( 'recurring' === $kind ) {
+			return array( 'type' => 'recurring', 'label' => 'Recurring', 'reason' => 'The plan is defined as a recurring subscription.' );
+		}
+		if ( in_array( $kind, array( 'one_time', 'lifetime', 'free' ), true ) ) {
+			$names = array( 'one_time' => 'one-time (finite) payment', 'lifetime' => 'lifetime (single payment)', 'free' => 'free' );
+			return array(
+				'type'   => 'one_time',
+				'label'  => 'One-time payment',
+				'reason' => 'The plan is a ' . $names[ $kind ] . ' plan' . ( $rec_mode ? ' (member meta shows a recurring payment mode, which is inconsistent and ignored)' : '' ) . '.',
+			);
+		}
+		return array( 'type' => 'undetermined', 'label' => 'Undetermined', 'reason' => 'The plan definition was not found, so recurring vs one-time cannot be determined. Manual review required.' );
 	}
 
 	// =========================================================================================

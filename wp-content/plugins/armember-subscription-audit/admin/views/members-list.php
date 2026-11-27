@@ -234,7 +234,7 @@ $pay_labels = array(
 					<td><?php echo esc_html( $row['user']['id'] ); ?></td>
 				<td class="armsa-c-name"><?php echo esc_html( $row['user']['name'] ); ?></td>
 				<td><?php echo esc_html( $row['user']['email'] ); ?></td>
-				<td class="armsa-c-plan"><?php echo esc_html( $row['plan_name'] ); ?></td>
+				<td class="armsa-c-plan"><?php echo esc_html( $row['plan_name'] ); ?> <?php $pt_l = \ARMSA\Assessor::payment_type( array( 'plan_kind' => $row['plan_kind'], 'meta' => array( 'mode' => $row['meta']['mode'] ) ) ); ?><span class="armsa-p2 armsa-p2-<?php echo 'recurring' === $pt_l['type'] ? 'gw_verified' : 'gw_not_assessed'; ?>"><?php echo esc_html( $pt_l['label'] ); ?></span></td>
 				<td class="armsa-c-gateway"><?php echo esc_html( Subscription_Audit::gateway_label( $a['gateway'] ) ); ?></td>
 				<td class="armsa-c-method"><?php echo '' !== $row['meta']['selected_payment_method'] ? esc_html( $row['meta']['selected_payment_method'] ) : '—'; ?></td>
 				<td class="armsa-c-mode"><?php echo esc_html( $a['is_recurring'] || '' !== $a['mode'] ? Subscription_Audit::mode_label( $a['mode'] ) : '—' ); ?></td>
@@ -257,7 +257,7 @@ $pay_labels = array(
 					<td class="armsa-c-missing"><?php echo '' !== $short ? esc_html( $short ) : '—'; ?></td>
 					<td class="armsa-c-assessed"><?php echo $when( $p2['assessed_at'] ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped in closure. ?></td>
 					<td class="armsa-c-synced"><?php echo $when( $p2['synced_at'] ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped in closure. ?></td>
-					<td><a class="button button-small" href="<?php echo esc_url( Admin_Menu::details_url( $row['user']['id'] ) ); ?>"><?php echo esc_html( Status::OV_READY === $eff ? __( 'Review & Sync', 'armember-subscription-audit' ) : ( $p2['has'] ? __( 'View Details', 'armember-subscription-audit' ) : __( 'Assess', 'armember-subscription-audit' ) ) ); ?></a></td>
+					<td><a class="button button-small" href="<?php echo esc_url( Admin_Menu::details_url( $row['user']['id'] ) ); ?>"><?php echo esc_html( Status::OV_READY === $eff ? __( 'Review & Sync', 'armember-subscription-audit' ) : ( $p2['has'] ? __( 'View Details', 'armember-subscription-audit' ) : ( 'recurring' === $pt_l['type'] ? __( 'Assess', 'armember-subscription-audit' ) : __( 'View Details', 'armember-subscription-audit' ) ) ) ); ?></a></td>
 			</tr>
 		<?php endforeach; ?>
 		</tbody>

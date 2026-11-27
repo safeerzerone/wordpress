@@ -120,4 +120,15 @@
 .armsa-details .armsa-timeline td, .armsa-details .armsa-timeline th { font-size: 12.5px; }
 .armsa-details .armsa-enter input[type=text] { max-width: 100%; }
 @media (max-width: 900px) { .armsa-details .armsa-hero { grid-template-columns: auto 1fr; } .armsa-details .armsa-hero-badges { grid-column: 1 / -1; align-items: flex-start; } .armsa-details .armsa-tabs { top: 46px; } }
+.armsa-acts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 10px 0 16px; }
+.armsa-act { display: flex; flex-direction: column; gap: 8px; background: #fff; border: 1px solid #e3e5e8; border-radius: 10px; padding: 14px; position: relative; box-shadow: 0 1px 2px rgba(0,0,0,.04); min-width: 0; }
+.armsa-act.is-off { background: #f6f7f7; }
+.armsa-act-n { position: absolute; top: 10px; right: 12px; width: 22px; height: 22px; border-radius: 50%; background: #2271b1; color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.armsa-act.is-off .armsa-act-n { background: #a7aaad; }
+.armsa-act-body { flex: 1; padding-right: 26px; }
+.armsa-act-t { display: block; font-size: 14px; margin-bottom: 4px; }
+.armsa-act-d { margin: 0; color: #646970; font-size: 12.5px; line-height: 1.45; }
+.armsa-act-foot form { margin: 0; }
+.armsa-act-foot .button { width: 100%; text-align: center; justify-content: center; }
+.armsa-act-why { margin: 6px 0 0; font-size: 12px; color: #b32d2e; line-height: 1.4; }
 </style>

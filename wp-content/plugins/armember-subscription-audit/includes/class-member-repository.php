@@ -325,19 +325,25 @@ final class Member_Repository {
 			$opts = maybe_unserialize( $r['arm_subscription_plan_options'] );
 			$opts = is_array( $opts ) ? $opts : array();
 			$type = strtolower( (string) $r['arm_subscription_plan_type'] );
-			$kind = 'unknown';
-			if ( 'recurring' === $type || ( isset( $opts['payment_type'] ) && 'subscription' === $opts['payment_type'] ) ) {
-				$kind = 'recurring';
-			} elseif ( 'free' === $type ) {
+			$pay_type = isset( $opts['payment_type'] ) ? strtolower( (string) $opts['payment_type'] ) : '';
+			$access   = isset( $opts['access_type'] ) ? strtolower( (string) $opts['access_type'] ) : '';
+			$kind     = 'unknown';
+			// Mirrors ARM_Plan: is_recurring() = payment_type "subscription" and NOT lifetime access.
+			if ( 'free' === $type ) {
 				$kind = 'free';
-			} elseif ( 'paid_infinite' === $type || ( isset( $opts['access_type'] ) && 'lifetime' === $opts['access_type'] ) ) {
+			} elseif ( 'lifetime' === $access || 'paid_infinite' === $type ) {
 				$kind = 'lifetime';
-			} elseif ( 'paid_finite' === $type ) {
+			} elseif ( 'subscription' === $pay_type || 'recurring' === $type ) {
+				$kind = 'recurring';
+			} elseif ( 'paid_finite' === $type || 'one_time' === $pay_type ) {
 				$kind = 'one_time';
 			}
 			$this->plans[ (int) $r['arm_subscription_plan_id'] ] = array(
-				'name' => (string) $r['arm_subscription_plan_name'],
-				'kind' => $kind,
+				'name'     => (string) $r['arm_subscription_plan_name'],
+				'kind'     => $kind,
+				'type_raw' => $type,
+				'setup'    => $pay_type,
+				'access'   => $access,
 			);
 		}
 		return $this->plans;
@@ -422,6 +428,7 @@ final class Member_Repository {
 					'plan_id'   => $pid,
 					'plan_name' => $plan ? $plan['name'] : ( $pid ? sprintf( 'Unknown plan #%d', $pid ) : 'No plan' ),
 					'plan_kind' => $kind,
+					'plan_def'  => $plan ? array( 'type' => $plan['type_raw'], 'setup' => $plan['setup'], 'access' => $plan['access'] ) : array( 'type' => '', 'setup' => '', 'access' => '' ),
 					'meta'      => $meta,
 					'pay'       => $pay,
 					'audit'     => $audit,

@@ -58,6 +58,7 @@ $overall_k  = $a ? Status::effective_overall( $a['overall']['status'], $sync_sta
 		<strong><?php echo esc_html( $a['model_label'] ); ?></strong>
 	</p>
 
+	<?php $pt = isset( $a['payment_type'] ) ? $a['payment_type'] : null; if ( $pt ) : ?><p class="armsa-alert armsa-alert-<?php echo 'recurring' === $pt['type'] ? 'info' : 'warn'; ?>"><strong><?php esc_html_e( 'Payment type:', 'armember-subscription-audit' ); ?> <?php echo esc_html( $pt['label'] ); ?></strong> — <?php echo esc_html( $pt['reason'] ); ?></p><?php endif; ?>
 	<p><strong><?php esc_html_e( 'What is required next:', 'armember-subscription-audit' ); ?></strong> <?php echo esc_html( $a['overall']['action'] ); ?></p>
 
 	<?php /* ---------------- A. Member payment information ---------------- */ ?>
@@ -244,22 +245,38 @@ $overall_k  = $a ? Status::effective_overall( $a['overall']['status'], $sync_sta
 			break;
 		}
 	}
-	$unsupported = 'unsupported' === $a['model'];
+	$ptype       = isset( $a['payment_type'] ) ? $a['payment_type'] : array( 'type' => 'recurring', 'label' => 'Recurring', 'reason' => '' );
+	$is_rec      = 'recurring' === $ptype['type'];
+	$unsupported = 'unsupported' === $a['model'] || ! $is_rec;
 	$can_lookup  = ! $unsupported && ! $active( 'assess' );
-	$why_lookup  = $unsupported ? __( 'No supported gateway integration for this payment model.', 'armember-subscription-audit' ) : __( 'A gateway lookup is already queued or running.', 'armember-subscription-audit' );
+	$why_lookup  = ! $is_rec ? __( 'Only recurring plans are synchronised with a payment gateway.', 'armember-subscription-audit' ) : ( $unsupported ? __( 'No supported gateway integration for this payment model.', 'armember-subscription-audit' ) : __( 'A gateway lookup is already queued or running.', 'armember-subscription-audit' ) );
 	$can_sync    = $pd['is_stored'] && Status::OV_READY === $a['overall']['status'] && ! $active( 'sync' ) && Status::SYNC_QUEUED !== $sync_state && Status::SYNC_RUNNING !== $sync_state;
 	$why_sync    = ! $pd['is_stored'] ? __( 'Not assessed with the gateway yet — run "Retrieve Gateway Information" first.', 'armember-subscription-audit' ) : ( Status::OV_READY !== $a['overall']['status'] ? $a['overall']['action'] : __( 'A synchronisation is already queued or running.', 'armember-subscription-audit' ) );
 	$can_retry   = $last_sync && 'failed' === $last_sync['status'];
 	?>
-	<div class="armsa-actions">
-		<?php Sync_Admin::form_open( 'assess_local', $uid, $pid ); Sync_Admin::button( __( 'Assess Member', 'armember-subscription-audit' ), true ); ?><span class="description"><?php esc_html_e( 'local data only, instant, no gateway call', 'armember-subscription-audit' ); ?></span></form>
-		<?php Sync_Admin::form_open( 'queue_assess', $uid, $pid ); Sync_Admin::button( __( 'Retrieve Gateway Information', 'armember-subscription-audit' ), $can_lookup, $why_lookup ); ?><span class="description"><?php esc_html_e( 'queued; also verifies existing values', 'armember-subscription-audit' ); ?></span></form>
-		<?php Sync_Admin::form_open( 'queue_sync', $uid, $pid ); Sync_Admin::button( __( 'Queue Synchronisation', 'armember-subscription-audit' ), $can_sync, $why_sync, true ); ?></form>
+	<?php
+	// One action card: step number, title, what it does, button, and (when disabled) why.
+	$card = function ( $step, $title, $desc, $action, $label, $enabled, $why = '', $primary = false, $hidden = '' ) use ( $uid, $pid ) {
+		echo '<div class="armsa-act' . ( $enabled ? '' : ' is-off' ) . '"><span class="armsa-act-n">' . esc_html( $step ) . '</span>';
+		echo '<div class="armsa-act-body"><strong class="armsa-act-t">' . esc_html( $title ) . '</strong><p class="armsa-act-d">' . esc_html( $desc ) . '</p></div>';
+		echo '<div class="armsa-act-foot">';
+		Sync_Admin::form_open( $action, $uid, $pid );
+		echo $hidden; // phpcs:ignore WordPress.Security.EscapeOutput -- built from escaped values below.
+		printf( '<button type="submit" class="button%s" %s>%s</button>', $primary ? ' button-primary' : '', $enabled ? '' : 'disabled', esc_html( $label ) );
+		echo '</form>';
+		if ( ! $enabled && '' !== $why ) {
+			echo '<p class="armsa-act-why">⚠ ' . esc_html( $why ) . '</p>';
+		}
+		echo '</div></div>';
+	};
+	?>
+	<div class="armsa-acts">
 		<?php
-		Sync_Admin::form_open( 'retry_jobs', $uid, $pid );
-		echo '<input type="hidden" name="job_ids[]" value="' . esc_attr( $last_sync ? $last_sync['id'] : 0 ) . '">';
-		Sync_Admin::button( __( 'Retry Synchronisation', 'armember-subscription-audit' ), (bool) $can_retry, __( 'The latest sync job has not failed.', 'armember-subscription-audit' ) );
-		?></form>
+		$card( '1', __( 'Assess Member', 'armember-subscription-audit' ), __( 'Checks WordPress, ARMember and WooCommerce data instantly. No gateway is contacted.', 'armember-subscription-audit' ), 'assess_local', __( 'Assess Member', 'armember-subscription-audit' ), $is_rec, __( 'Only recurring (Subscription / Recurring Payment) plans are assessed.', 'armember-subscription-audit' ) );
+		$card( '2', __( 'Retrieve Gateway Information', 'armember-subscription-audit' ), __( 'Queued background lookup that retrieves and verifies the gateway records (read-only).', 'armember-subscription-audit' ), 'queue_assess', __( 'Retrieve / Verify', 'armember-subscription-audit' ), $can_lookup, $why_lookup );
+		$card( '3', __( 'Queue Synchronisation', 'armember-subscription-audit' ), __( 'Stores the verified references in ARMember. Re-checked live before anything is written.', 'armember-subscription-audit' ), 'queue_sync', __( 'Queue Synchronisation', 'armember-subscription-audit' ), $can_sync, $why_sync, true );
+		$card( '4', __( 'Retry Synchronisation', 'armember-subscription-audit' ), __( 'Re-queues the latest sync job if it failed.', 'armember-subscription-audit' ), 'retry_jobs', __( 'Retry Synchronisation', 'armember-subscription-audit' ), (bool) $can_retry, __( 'The latest sync job has not failed.', 'armember-subscription-audit' ), false, '<input type="hidden" name="job_ids[]" value="' . esc_attr( $last_sync ? $last_sync['id'] : 0 ) . '">' );
+		?>
 	</div>
 	<?php if ( $jobs ) : ?>
 		<table class="widefat striped armsa-jobs"><thead><tr><th>#</th><th><?php esc_html_e( 'Type', 'armember-subscription-audit' ); ?></th><th><?php esc_html_e( 'Status', 'armember-subscription-audit' ); ?></th><th><?php esc_html_e( 'Attempts', 'armember-subscription-audit' ); ?></th><th><?php esc_html_e( 'Result / error', 'armember-subscription-audit' ); ?></th><th><?php esc_html_e( 'Updated', 'armember-subscription-audit' ); ?></th></tr></thead><tbody>

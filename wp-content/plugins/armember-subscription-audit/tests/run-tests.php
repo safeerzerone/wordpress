@@ -194,6 +194,19 @@ t( 'every assessment step is reported to the log (member, payment meta, history,
 $log_text = json_encode( $r['_log'] );
 t( 'no secrets in the log', false === strpos( $log_text, 'sk_test_FAKE' ) );
 
+// ---------------------------------------------------------------------------------------------
+section( 'Payment type: only recurring plans sync' );
+foreach ( array( 'one_time', 'lifetime', 'free' ) as $k ) {
+	$h = stripe_ok_http();
+	$f = facts( array( 'plan_kind' => $k, 'meta' => array( 'raw' => array( 'arm_subscr_id' => '', 'arm_stripe' => array( 'customer_id' => '', 'transaction_id' => '' ) ), 'subscr_id' => '' ), 'pay' => array( 'log_refs' => array( array( 'log_id' => 1, 'field' => 'arm_token', 'value' => 'sub_1AAA', 'gateway' => 'stripe' ) ) ) ) );
+	$r = run_assess( $f, $h );
+	t( "$k plan: Not Applicable, no gateway call, no proposals, nothing missing", Status::OV_NOT_APPLICABLE === $r['overall']['status'] && ! $h->calls && ! $r['proposals'] && ! $r['missing'] && 'one_time' === $r['payment_type']['type'], $r['overall']['status'] . ' calls=' . count( $h->calls ) );
+}
+$r = run_assess( facts( array( 'plan_kind' => 'unknown' ) ), $h = stripe_ok_http() );
+t( 'unknown plan definition: Needs Review, never synced, no gateway call', Status::OV_REVIEW === $r['overall']['status'] && ! $h->calls && 'undetermined' === $r['payment_type']['type'] );
+$r = run_assess( facts(), stripe_ok_http() );
+t( 'recurring plan still assessed normally', 'recurring' === $r['payment_type']['type'] && Status::OV_RENEWAL_OK === $r['overall']['status'] );
+
 require __DIR__ . '/test-writer-and-load.php';
 
 echo "\n" . $GLOBALS['t_pass'] . ' passed, ' . count( $GLOBALS['t_fail'] ) . " failed\n";

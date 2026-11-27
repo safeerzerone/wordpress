@@ -54,6 +54,7 @@ final class Status {
 	const OV_SYNC_FAILED    = 'sync_failed';
 	const OV_LINKED_UNVER   = 'gateway_linked_renewal_not_verified';
 	const OV_RENEWAL_OK     = 'renewal_readiness_verified';
+	const OV_NOT_APPLICABLE = 'not_applicable';
 
 	// Sync state (stored separately from the assessment).
 	const SYNC_NONE    = 'never';
@@ -132,6 +133,7 @@ final class Status {
 			self::OV_SYNC_FAILED  => 'Sync Failed',
 			self::OV_LINKED_UNVER => 'Gateway Linked – ARMember Renewal Not Verified',
 			self::OV_RENEWAL_OK   => 'Renewal Readiness Verified',
+			self::OV_NOT_APPLICABLE => 'Not Applicable – One-time Plan',
 		);
 	}
 

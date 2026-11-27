@@ -126,6 +126,10 @@ foreach ( $history as $h ) {
 					$tile( __( 'Completed recurring', 'armember-subscription-audit' ), $show( $m['completed'] ) );
 					$tile( __( 'Payment cycle', 'armember-subscription-audit' ), $show( $m['cycle'] ) );
 					$tile( __( 'Detected model', 'armember-subscription-audit' ), $show( $a['model'] ) );
+					$pt_o = \ARMSA\Assessor::payment_type( array( 'plan_kind' => $row['plan_kind'], 'meta' => array( 'mode' => $m['mode'] ) ) );
+					$tile( __( 'Plan type (ARMember)', 'armember-subscription-audit' ), '' !== $row['plan_def']['type'] ? $row['plan_def']['type'] : '—' );
+					$tile( __( 'Setup type', 'armember-subscription-audit' ), '' !== $row['plan_def']['setup'] ? $row['plan_def']['setup'] . ( 'subscription' === $row['plan_def']['setup'] ? ' (Subscription / Recurring Payment)' : '' ) : '—' );
+					$tile( __( 'Payment type', 'armember-subscription-audit' ), $pt_o['label'] );
 					$tile( __( 'Subscription ID (arm_subscr_id)', 'armember-subscription-audit' ), $show( $m['subscr_id'] ), true );
 					$tile( __( 'Reference used by audit', 'armember-subscription-audit' ), '' !== $a['reference'] ? $a['reference'] : '—', true );
 					$tile( __( 'Cancellation', 'armember-subscription-audit' ), ! empty( $m['cancelled'] ) ? 'Cancelled (' . $show( $m['cancelled'] ) . ')' : __( 'Not cancelled', 'armember-subscription-audit' ) );

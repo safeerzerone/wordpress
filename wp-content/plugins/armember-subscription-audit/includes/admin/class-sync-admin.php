@@ -82,6 +82,11 @@ final class Sync_Admin {
 	public function handle_assess_local() {
 		$this->guard();
 		list( $uid, $pid ) = $this->ids();
+		$pv = $this->service()->preview( $uid, $pid );
+		if ( $pv && 'recurring' !== $pv['payment_type']['type'] ) {
+			$this->notice( 'warning', 'Assessment applies to recurring (Subscription / Recurring Payment) plans only. This plan is: ' . $pv['payment_type']['label'] . '.' );
+			$this->back_to_member( $uid );
+		}
 		$a = $this->service()->assess( $uid, $pid, get_current_user_id(), false );
 		$this->notice( $a ? 'success' : 'error', $a ? 'Local assessment completed: ' . $a['overall']['label'] . '. (No gateway was contacted; use "Retrieve Gateway Information" for that.)' : 'Member / plan not found.' );
 		$this->back_to_member( $uid );
