@@ -226,6 +226,17 @@ function armwpi_assign_plan_on_import( $user_id, $user_meta = array() ) {
 		}
 	}
 
+	/**
+	 * ARMember writes arm_user_plan_<id> BEFORE it writes arm_user_plan_ids during this call, and does not fire
+	 * arm_after_user_plan_change for it. Meta listeners that ran on the first write (arsenal-settings:
+	 * current_arsenal_subscription, renewal_date, ...) therefore saw "no active plan". Re-run them now that the
+	 * plan is fully assigned. Guarded so this plugin stays standalone.
+	 */
+	if ( function_exists( 'arsenal_settings_on_armember_plan_assigned' ) ) {
+		arsenal_settings_on_armember_plan_assigned( $user_id, $plan_id );
+	}
+	do_action( 'armwpi_after_plan_assigned', $user_id, $plan_id );
+
 	// Verify the result instead of assuming success.
 	$after = get_user_meta( $user_id, 'arm_user_plan_ids', true );
 	if ( is_array( $after ) && in_array( $plan_id, array_map( 'intval', $after ), true ) ) {
