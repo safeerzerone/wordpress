@@ -194,6 +194,62 @@ final class Payment_History {
 	}
 
 	/**
+	 * Phase 2: identifier-bearing columns of one member's log rows (read-only, for discovery).
+	 *
+	 * @param int $user_id User.
+	 * @param int $plan_id Plan (0 = all).
+	 * @return array[] rows with arm_log_id, arm_plan_id, arm_token, arm_transaction_id, arm_payment_gateway, arm_payer_email
+	 */
+	public function refs_for_user( $user_id, $plan_id = 0 ) {
+		global $wpdb;
+		$user_id = absint( $user_id );
+		if ( ! $user_id || ! $this->is_available() ) {
+			return array();
+		}
+		$cols  = $this->select_list( array( 'arm_log_id', 'arm_plan_id', 'arm_token', 'arm_transaction_id', 'arm_payment_gateway', 'arm_payer_email' ) );
+		$table = $this->table();
+		$sql   = "SELECT {$cols} FROM `{$table}` WHERE `arm_user_id` = %d";
+		$args  = array( $user_id );
+		if ( $plan_id ) {
+			$sql   .= ' AND `arm_plan_id` = %d';
+			$args[] = absint( $plan_id );
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
+		$rows = $wpdb->get_results( $wpdb->prepare( $sql . ' ORDER BY `arm_log_id` DESC LIMIT 200', $args ), ARRAY_A );
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Other members whose payment log carries the same identifier (duplicate-reference detection).
+	 *
+	 * @param string[] $values  Identifiers.
+	 * @param int      $user_id Member to exclude.
+	 * @return array<string,int[]> value => other user ids
+	 */
+	public function other_users_with_refs( array $values, $user_id ) {
+		global $wpdb;
+		$values = array_values( array_unique( array_filter( array_map( 'strval', $values ) ) ) );
+		if ( ! $values || ! $this->is_available() || ! $this->has_column( 'arm_token' ) ) {
+			return array();
+		}
+		$table = $this->table();
+		$ph    = implode( ',', array_fill( 0, count( $values ), '%s' ) );
+		$tcol  = $this->has_column( 'arm_transaction_id' ) ? "OR `arm_transaction_id` IN ({$ph})" : '';
+		$args  = array_merge( $values, $this->has_column( 'arm_transaction_id' ) ? $values : array(), array( absint( $user_id ) ) );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT arm_user_id, arm_token" . ( $tcol ? ', arm_transaction_id' : '' ) . " FROM `{$table}` WHERE ( `arm_token` IN ({$ph}) {$tcol} ) AND `arm_user_id` <> %d AND `arm_user_id` > 0 LIMIT 200", $args ), ARRAY_A );
+		$out  = array();
+		foreach ( (array) $rows as $r ) {
+			foreach ( array( 'arm_token', 'arm_transaction_id' ) as $c ) {
+				if ( isset( $r[ $c ] ) && in_array( $r[ $c ], $values, true ) ) {
+					$out[ $r[ $c ] ][] = (int) $r['arm_user_id'];
+				}
+			}
+		}
+		return array_map( 'array_unique', $out );
+	}
+
+	/**
 	 * Payment date, falling back to created date when the date is empty / epoch default.
 	 *
 	 * @param array $row Log row.

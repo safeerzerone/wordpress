@@ -53,7 +53,9 @@ final class Member_Repository {
 		$per_page = max( 1, min( 100, (int) $args['per_page'] ) );
 		$page     = max( 1, (int) $args['page'] );
 		$offset   = ( $page - 1 ) * $per_page;
-		$derived  = '' !== $args['gateway'] || '' !== $args['mode'] || '' !== $args['status'];
+		// Phase 2 filters (optional keys): gw_ready, arm_ready, sync (overall/effective sync status).
+		$args    += array( 'gw_ready' => '', 'arm_ready' => '', 'sync' => '' );
+		$derived  = '' !== $args['gateway'] || '' !== $args['mode'] || '' !== $args['status'] || '' !== $args['gw_ready'] || '' !== $args['arm_ready'] || '' !== $args['sync'];
 
 		$this->truncated = false;
 
@@ -87,6 +89,15 @@ final class Member_Repository {
 				if ( '' !== $args['status'] && $row['audit']['status'] !== $args['status'] ) {
 					continue;
 				}
+				if ( '' !== $args['gw_ready'] && $row['p2']['gateway_status'] !== $args['gw_ready'] ) {
+					continue;
+				}
+				if ( '' !== $args['arm_ready'] && $row['p2']['arm_status'] !== $args['arm_ready'] ) {
+					continue;
+				}
+				if ( '' !== $args['sync'] && $row['p2']['effective'] !== $args['sync'] ) {
+					continue;
+				}
 				$matches[] = $row;
 			}
 			if ( count( $users ) < self::BATCH ) {
@@ -102,6 +113,59 @@ final class Member_Repository {
 			'total'       => $total,
 			'total_pages' => (int) ceil( $total / $per_page ),
 		);
+	}
+
+	/** Shared derived-filter test (Phase 1 + Phase 2 filters). */
+	private function row_matches( array $row, array $args ) {
+		if ( '' !== $args['gateway'] && $this->gateway_bucket( $row['audit']['gateway'] ) !== $args['gateway'] ) {
+			return false;
+		}
+		if ( '' !== $args['mode'] && $this->mode_bucket( $row['audit']['mode'] ) !== $args['mode'] ) {
+			return false;
+		}
+		if ( '' !== $args['status'] && $row['audit']['status'] !== $args['status'] ) {
+			return false;
+		}
+		if ( '' !== $args['gw_ready'] && $row['p2']['gateway_status'] !== $args['gw_ready'] ) {
+			return false;
+		}
+		if ( '' !== $args['arm_ready'] && $row['p2']['arm_status'] !== $args['arm_ready'] ) {
+			return false;
+		}
+		if ( '' !== $args['sync'] && $row['p2']['effective'] !== $args['sync'] ) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Every (user, plan) matching the filters, for "all filtered members" bulk actions / exports.
+	 * Bounded by MAX_SCAN users and $cap rows.
+	 *
+	 * @return array[] rows (full audit rows)
+	 */
+	public function matching_rows( array $args, $cap = 2000 ) {
+		$args    += array( 'gw_ready' => '', 'arm_ready' => '', 'sync' => '', 'gateway' => '', 'mode' => '', 'status' => '', 'search' => '', 'orderby' => 'id', 'order' => 'asc' );
+		$out     = array();
+		$scanned = 0;
+		$cursor  = 0;
+		while ( $scanned < self::MAX_SCAN && count( $out ) < $cap ) {
+			$users = $this->query_users( $args, $cursor, self::BATCH );
+			if ( ! $users ) {
+				break;
+			}
+			$cursor  += self::BATCH;
+			$scanned += count( $users );
+			foreach ( $this->build_rows( $users ) as $row ) {
+				if ( $this->row_matches( $row, $args ) && count( $out ) < $cap ) {
+					$out[] = $row;
+				}
+			}
+			if ( count( $users ) < self::BATCH ) {
+				break;
+			}
+		}
+		return $out;
 	}
 
 	/**
@@ -220,6 +284,28 @@ final class Member_Repository {
 		return array_values( $users );
 	}
 
+	/** Phase 2 columns derived from the stored assessment row (never from live gateway calls). */
+	private function phase2_state( $row ) {
+		$missing = array();
+		if ( $row && ! empty( $row['missing'] ) ) {
+			$m       = json_decode( $row['missing'], true );
+			$missing = is_array( $m ) ? $m : array();
+		}
+		$overall = $row ? $row['overall_status'] : Status::OV_NOT_ASSESSED;
+		$sync    = $row ? $row['sync_status'] : Status::SYNC_NONE;
+		return array(
+			'has'            => (bool) $row,
+			'gateway_status' => $row ? $row['gateway_status'] : Status::GW_NA,
+			'arm_status'     => $row ? $row['arm_status'] : Status::ARM_NA,
+			'overall'        => $overall,
+			'sync'           => $sync,
+			'effective'      => Status::effective_overall( $overall, $sync ),
+			'missing'        => $missing,
+			'assessed_at'    => $row ? $row['assessed_at'] : '',
+			'synced_at'      => $row ? $row['synced_at'] : '',
+		);
+	}
+
 	/** Plan definitions (small table), loaded once per request. Own columns only. */
 	private function plans() {
 		global $wpdb;
@@ -274,6 +360,14 @@ final class Member_Repository {
 		$plans    = $this->plans();
 		$payments = $this->payments->summaries_for_users( $ids );
 		$rows     = array();
+		$stored   = array();
+		if ( class_exists( __NAMESPACE__ . '\\Sync_Service' ) ) {
+			$pairs = array();
+			foreach ( $ids as $i ) {
+				$pairs[] = array( $i, 0 );
+			}
+			$stored = Sync_Service::stored_many( $pairs ); // One query for the whole page (no gateway calls).
+		}
 
 		foreach ( $users as $u ) {
 			$uid      = (int) $u->ID;
@@ -331,6 +425,7 @@ final class Member_Repository {
 					'meta'      => $meta,
 					'pay'       => $pay,
 					'audit'     => $audit,
+					'p2'        => $this->phase2_state( isset( $stored[ $uid . ':' . $pid ] ) ? $stored[ $uid . ':' . $pid ] : null ),
 				);
 			}
 		}

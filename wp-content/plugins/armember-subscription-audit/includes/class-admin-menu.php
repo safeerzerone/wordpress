@@ -19,9 +19,12 @@ final class Admin_Menu {
 
 	/** @var Member_Repository */
 	private $repository;
+	/** @var Sync_Admin|null */
+	private $sync_admin;
 
-	public function __construct( Member_Repository $repository ) {
+	public function __construct( Member_Repository $repository, Sync_Admin $sync_admin = null ) {
 		$this->repository = $repository;
+		$this->sync_admin = $sync_admin;
 	}
 
 	public function register() {
@@ -31,6 +34,19 @@ final class Admin_Menu {
 	public function add_menu() {
 		add_menu_page( 'ARMember Subscription Audit', 'ARMember Subscription Audit', self::CAPABILITY, self::SLUG, array( $this, 'render' ), 'dashicons-clipboard', 58 );
 		add_submenu_page( self::SLUG, 'Members', 'Members', self::CAPABILITY, self::SLUG, array( $this, 'render' ) );
+		add_action( 'admin_notices', array( $this, 'queue_health_notice' ) );
+	}
+
+	/** Warn (on this plugin's screens only) when queued jobs exist but WP-Cron is disabled. */
+	public function queue_health_notice() {
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		if ( ! $screen || false === strpos( (string) $screen->id, self::SLUG ) ) {
+			return;
+		}
+		$c = Queue::counts();
+		if ( ! empty( $c['queued'] ) && defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON && ! wp_next_scheduled( Queue::HOOK ) ) {
+			echo '<div class="notice notice-warning"><p>' . esc_html__( 'Queued jobs are waiting but WP-Cron is disabled and no real cron is calling wp-cron.php. See docs/PHASE2-OPERATIONS.md.', 'armember-subscription-audit' ) . '</p></div>';
+		}
 	}
 
 	public static function gateway_options() {
@@ -77,8 +93,10 @@ final class Admin_Menu {
 			echo '<div class="notice notice-warning"><p>' . esc_html__( 'ARMember payment log table (or its arm_user_id / arm_plan_id columns) was not found. Payment information will show as "No Record".', 'armember-subscription-audit' ) . '</p></div>';
 		}
 
+		Sync_Admin::render_notice();
+
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only routing, details view verifies nonce below.
-		$view = isset( $_GET['view'] ) ? sanitize_key( wp_unslash( $_GET['view'] ) ) : '';
+		$view =isset( $_GET['view'] ) ? sanitize_key( wp_unslash( $_GET['view'] ) ) : '';
 		if ( 'details' === $view ) {
 			$this->render_details();
 			return;
@@ -107,6 +125,10 @@ final class Admin_Menu {
 			'order'    => $order,
 			'page'     => $page_num,
 			'per_page' => 20,
+			// Phase 2 filters (stored assessments only; no gateway calls while listing).
+			'gw_ready'  => isset( $get['gw_ready'] ) && isset( Status::gateway_labels()[ sanitize_key( $get['gw_ready'] ) ] ) ? sanitize_key( $get['gw_ready'] ) : '',
+			'arm_ready' => isset( $get['arm_ready'] ) && isset( Status::arm_labels()[ sanitize_key( $get['arm_ready'] ) ] ) ? sanitize_key( $get['arm_ready'] ) : '',
+			'sync'      => isset( $get['sync'] ) && isset( Status::overall_labels()[ sanitize_key( $get['sync'] ) ] ) ? sanitize_key( $get['sync'] ) : '',
 		);
 
 		$result    = $this->repository->list_rows( $args );
@@ -133,6 +155,21 @@ final class Admin_Menu {
 		}
 		$history  = $this->repository->payments()->history_for_user( $user_id );
 		$user     = $rows[0]['user'];
+
+		// Phase 2 data per plan: last stored assessment (or a no-network preview), jobs, staged values.
+		$service = new Sync_Service( new Collector( $this->repository ) );
+		$p2      = array();
+		foreach ( $rows as $r ) {
+			$stored = Sync_Service::stored( $user_id, $r['plan_id'] );
+			$a      = Sync_Service::decode( $stored );
+			$p2[ $r['plan_id'] ] = array(
+				'stored'    => $stored,
+				'a'         => $a ? $a : $service->preview( $user_id, $r['plan_id'] ),
+				'is_stored' => (bool) $a,
+				'jobs'      => Queue::jobs_for( $user_id, $r['plan_id'] ),
+			);
+		}
+		$timeline = Logger::timeline( $user_id, 0, 300 );
 		$back_url = add_query_arg( array( 'page' => self::SLUG ), admin_url( 'admin.php' ) );
 
 		include ARMSA_DIR . 'admin/views/member-details.php';
