@@ -37,6 +37,8 @@ final class Admin_Menu {
 		return array(
 			'stripe'      => 'Stripe',
 			'woocommerce' => 'WooCommerce',
+			'paypal'      => 'PayPal',
+			'gocardless'  => 'GoCardless',
 			'other'       => 'Other',
 			'none'        => 'Not configured',
 		);

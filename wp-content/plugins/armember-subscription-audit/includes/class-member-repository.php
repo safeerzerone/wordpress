@@ -121,12 +121,28 @@ final class Member_Repository {
 		return $this->build_rows( array( $user ) );
 	}
 
-	/** Gateway filter bucket: stripe | woocommerce | other | none. */
-	private function gateway_bucket( $gateway ) {
-		if ( '' === $gateway ) {
-			return 'none';
+	/** Profile (custom field) usermeta keys that hold the member's payment method, in priority order. */
+	const PROFILE_GATEWAY_KEYS = array( 'selected_payment_method', 'payment_method_for_cms', 'order_payment_method' );
+
+	/** Recognised gateway key (stripe|woocommerce|paypal|gocardless) from profile fields, or ''. */
+	public function profile_gateway( $user_id ) {
+		foreach ( self::PROFILE_GATEWAY_KEYS as $k ) {
+			$v = get_user_meta( $user_id, $k, true );
+			if ( ! is_scalar( $v ) ) {
+				continue;
+			}
+			$key = Subscription_Audit::gateway_key( $v );
+			if ( '' !== $key && 'other' !== $key ) {
+				return $key;
+			}
 		}
-		return in_array( $gateway, array( 'stripe', 'woocommerce' ), true ) ? $gateway : 'other';
+		return '';
+	}
+
+	/** Gateway filter bucket: stripe | woocommerce | paypal | gocardless | other | none. */
+	private function gateway_bucket( $gateway ) {
+		$key = \ARMSA\Subscription_Audit::gateway_key( $gateway );
+		return '' === $key ? 'none' : $key;
 	}
 
 	/** Mode filter bucket: auto_debit | manual | other | none. */
@@ -264,6 +280,7 @@ final class Member_Repository {
 			$plan_ids = get_user_meta( $uid, 'arm_user_plan_ids', true );
 			$plan_ids = is_array( $plan_ids ) ? $plan_ids : array_filter( explode( ',', (string) $plan_ids ) );
 			$plan_ids = array_values( array_unique( array_filter( array_map( 'absint', $plan_ids ) ) ) );
+			$profile_gateway = $this->profile_gateway( $uid );
 
 			if ( ! $plan_ids ) {
 				$plan_ids = array( 0 );
@@ -276,6 +293,8 @@ final class Member_Repository {
 
 				$meta = array(
 					'gateway'   => isset( $raw['arm_user_gateway'] ) ? (string) $raw['arm_user_gateway'] : '',
+					'profile_gateway' => $profile_gateway,
+					'selected_payment_method' => is_scalar( $spm = get_user_meta( $uid, 'selected_payment_method', true ) ) ? trim( (string) $spm ) : '',
 					'mode'      => isset( $raw['arm_payment_mode'] ) ? (string) $raw['arm_payment_mode'] : '',
 					'cycle'     => isset( $raw['arm_payment_cycle'] ) ? $raw['arm_payment_cycle'] : '',
 					'completed' => isset( $raw['arm_completed_recurring'] ) ? $raw['arm_completed_recurring'] : '',

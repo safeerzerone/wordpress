@@ -108,6 +108,7 @@ $pay_labels = array(
 				<th><?php esc_html_e( 'Email', 'armember-subscription-audit' ); ?></th>
 				<th><?php esc_html_e( 'Membership Plan', 'armember-subscription-audit' ); ?></th>
 				<th><?php esc_html_e( 'Gateway', 'armember-subscription-audit' ); ?></th>
+				<th><?php esc_html_e( 'Selected Payment Method', 'armember-subscription-audit' ); ?></th>
 				<th><?php esc_html_e( 'Payment Mode', 'armember-subscription-audit' ); ?></th>
 				<th><?php esc_html_e( 'Subscription Reference', 'armember-subscription-audit' ); ?></th>
 				<th><?php echo $sort_link( 'last_payment', __( 'Last Payment Date', 'armember-subscription-audit' ) ); // phpcs:ignore WordPress.Security.EscapeOutput ?></th>
@@ -119,7 +120,7 @@ $pay_labels = array(
 		</thead>
 		<tbody>
 		<?php if ( ! $rows ) : ?>
-			<tr><td colspan="12"><?php esc_html_e( 'No ARMember members match your criteria.', 'armember-subscription-audit' ); ?></td></tr>
+			<tr><td colspan="13"><?php esc_html_e( 'No ARMember members match your criteria.', 'armember-subscription-audit' ); ?></td></tr>
 		<?php endif; ?>
 		<?php
 		foreach ( $rows as $row ) :
@@ -134,6 +135,7 @@ $pay_labels = array(
 				<td><?php echo esc_html( $row['user']['email'] ); ?></td>
 				<td><?php echo esc_html( $row['plan_name'] ); ?></td>
 				<td><?php echo esc_html( Subscription_Audit::gateway_label( $a['gateway'] ) ); ?></td>
+				<td><?php echo '' !== $row['meta']['selected_payment_method'] ? esc_html( $row['meta']['selected_payment_method'] ) : '—'; ?></td>
 				<td><?php echo esc_html( $a['is_recurring'] || '' !== $a['mode'] ? Subscription_Audit::mode_label( $a['mode'] ) : '—' ); ?></td>
 				<td><?php echo '' !== $a['reference'] ? '<code>' . esc_html( $a['reference'] ) . '</code>' : '—'; // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
 				<td><?php echo $date ? esc_html( mysql2date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $date ) ) : '—'; ?></td>

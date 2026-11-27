@@ -44,18 +44,36 @@ final class Subscription_Audit {
 		);
 	}
 
-	public static function gateway_label( $gateway ) {
+	/** Normalise a raw gateway value to stripe | woocommerce | paypal | gocardless | other | '' (empty). */
+	public static function gateway_key( $gateway ) {
 		$g = strtolower( trim( (string) $gateway ) );
 		if ( '' === $g ) {
-			return 'Not configured';
+			return '';
 		}
-		if ( 'stripe' === $g ) {
-			return 'Stripe';
+		$flat = preg_replace( '/[^a-z0-9]/', '', $g );
+		if ( 'stripe' === $g || 'woocommerce' === $g ) {
+			return $g;
 		}
-		if ( 'woocommerce' === $g ) {
-			return 'WooCommerce';
+		// paypal, paypal_express, "PayPal Standard", woocommerce_paypal, ppcp-gateway (WC PayPal Payments), ppec_paypal.
+		if ( false !== strpos( $flat, 'paypal' ) || 0 === strpos( $flat, 'ppcp' ) || 0 === strpos( $flat, 'ppec' ) ) {
+			return 'paypal';
 		}
-		return 'Other';
+		if ( false !== strpos( $flat, 'gocardless' ) ) {
+			return 'gocardless';
+		}
+		return 'other';
+	}
+
+	public static function gateway_label( $gateway ) {
+		$labels = array(
+			''           => 'Not configured',
+			'stripe'     => 'Stripe',
+			'woocommerce' => 'WooCommerce',
+			'paypal'     => 'PayPal',
+			'gocardless' => 'GoCardless',
+			'other'      => 'Other',
+		);
+		return $labels[ self::gateway_key( $gateway ) ];
 	}
 
 	public static function mode_label( $mode ) {
@@ -95,6 +113,14 @@ final class Subscription_Audit {
 		// Fall back to the payment log when the plan meta carries no gateway / mode.
 		$log_gateways = isset( $pay['gateways'] ) ? $pay['gateways'] : array();
 		$log_modes    = isset( $pay['modes'] ) ? $pay['modes'] : array();
+		// Imported members: ARMember gateway is empty / "manual" while the real method lives in profile fields.
+		$profile_gw   = isset( $meta['profile_gateway'] ) ? (string) $meta['profile_gateway'] : '';
+		$from_profile = false;
+		if ( '' !== $profile_gw && in_array( $gateway, array( '', 'manual' ), true ) ) {
+			$notes[]      = 'Gateway taken from the member profile payment-method field (ARMember plan metadata has "' . ( '' === $gateway ? 'empty' : $gateway ) . '").';
+			$gateway      = $profile_gw;
+			$from_profile = true;
+		}
 		if ( '' === $gateway && 1 === count( $log_gateways ) ) {
 			$gateway = $log_gateways[0];
 			$notes[] = 'Gateway taken from payment log (not present in plan metadata).';
@@ -154,7 +180,7 @@ final class Subscription_Audit {
 		}
 		if ( '' === $gateway ) {
 			$missing[] = 'Gateway';
-		} elseif ( ! in_array( $gateway, array( 'stripe', 'woocommerce' ), true ) ) {
+		} elseif ( 'other' === self::gateway_key( $gateway ) ) {
 			$incons[] = 'Unrecognised gateway "' . $gateway . '".';
 		}
 		if ( '' === $mode ) {
@@ -174,7 +200,7 @@ final class Subscription_Audit {
 		if ( count( $log_gateways ) > 1 ) {
 			$incons[] = 'Payment log uses several gateways: ' . implode( ', ', $log_gateways ) . '.';
 		}
-		if ( '' !== $gateway && $log_gateways && ! in_array( $gateway, $log_gateways, true ) && ! ( 'woocommerce' === $gateway && in_array( 'stripe', $log_gateways, true ) ) ) {
+		if ( ! $from_profile && '' !== $gateway && $log_gateways && ! in_array( $gateway, $log_gateways, true ) && ! ( 'woocommerce' === $gateway && in_array( 'stripe', $log_gateways, true ) ) ) {
 			$incons[] = 'Metadata gateway "' . $gateway . '" differs from payment log gateway(s): ' . implode( ', ', $log_gateways ) . '.';
 		}
 		if ( $multi ) {
