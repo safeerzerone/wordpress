@@ -76,6 +76,58 @@ function armwpi_resolve_plan_id( $name ) {
 }
 
 /**
+ * Map a free-text payment method from the CRM ("PayPal", "paypal", "GoCardless", "Bank Direct Debit", ...)
+ * to an ARMember-style gateway slug. Case, spaces and punctuation are ignored.
+ *
+ * @param string $label Raw value.
+ * @return string paypal|gocardless|stripe|woocommerce, or '' when not recognised.
+ */
+function armwpi_gateway_from_label( $label ) {
+	$flat = preg_replace( '/[^a-z0-9]/', '', strtolower( trim( (string) $label ) ) );
+	if ( '' === $flat ) {
+		return '';
+	}
+	if ( false !== strpos( $flat, 'paypal' ) || 0 === strpos( $flat, 'ppcp' ) || 0 === strpos( $flat, 'ppec' ) ) {
+		return 'paypal';
+	}
+	if ( false !== strpos( $flat, 'gocardless' ) ) {
+		return 'gocardless';
+	}
+	if ( 'card' === $flat || false !== strpos( $flat, 'stripe' ) ) {
+		return 'stripe';
+	}
+	if ( 'woocommerce' === $flat || 'bankdirectdebit' === $flat ) {
+		return 'woocommerce';
+	}
+	return '';
+}
+
+/**
+ * Resolve the gateway for an imported member from the CRM fields (first recognised value wins).
+ *
+ * Filter `armwpi_payment_fields` changes the field list; filter `armwpi_payment_gateway` can override the result.
+ *
+ * @param int   $user_id   User ID.
+ * @param array $user_meta Fields loaded from the CRM.
+ * @return string Gateway slug or ''.
+ */
+function armwpi_resolve_gateway( $user_id, $user_meta ) {
+	$fields  = apply_filters( 'armwpi_payment_fields', array( 'selected_payment_method', 'payment_method_for_cms', 'order_payment_method' ) );
+	$gateway = '';
+	foreach ( (array) $fields as $field ) {
+		$value = isset( $user_meta[ $field ] ) ? $user_meta[ $field ] : get_user_meta( $user_id, $field, true );
+		if ( is_array( $value ) ) {
+			$value = reset( $value );
+		}
+		$gateway = armwpi_gateway_from_label( is_scalar( $value ) ? (string) $value : '' );
+		if ( '' !== $gateway ) {
+			break;
+		}
+	}
+	return (string) apply_filters( 'armwpi_payment_gateway', $gateway, $user_id, $user_meta );
+}
+
+/**
  * Hook: runs once for each user WP Fusion creates during an import.
  * (WP Fusion fires wpf_user_imported only for newly created users, after fields and tags are saved.)
  *
@@ -142,10 +194,13 @@ function armwpi_assign_plan_on_import( $user_id, $user_meta = array() ) {
 		}
 	}
 
+	// Gateway from the CRM payment-method fields (PayPal, GoCardless, ...). Empty => ARMember default ("manual").
+	$gateway = armwpi_resolve_gateway( $user_id, $user_meta );
+
 	// Same payload ARMember's own CSV importer sends (class.arm_members.php, arm_add_import_user).
 	$posted = array(
 		'arm_user_plan'               => $plan_id,
-		'payment_gateway'             => 'manual',
+		'payment_gateway'             => '' !== $gateway ? $gateway : 'manual',
 		'arm_selected_payment_mode'   => 'manual_subscription',
 		'arm_primary_status'          => 1,
 		'arm_secondary_status'        => 0,
@@ -174,7 +229,7 @@ function armwpi_assign_plan_on_import( $user_id, $user_meta = array() ) {
 	// Verify the result instead of assuming success.
 	$after = get_user_meta( $user_id, 'arm_user_plan_ids', true );
 	if ( is_array( $after ) && in_array( $plan_id, array_map( 'intval', $after ), true ) ) {
-		$note = $plan->is_recurring() ? ' NOTE: recurring plan - gateway is "manual"; next-due/Stripe linkage not set up by this plugin.' : '';
+		$note = $plan->is_recurring() ? ' NOTE: recurring plan - gateway "' . ( '' !== $gateway ? $gateway : 'manual' ) . '", mode manual_subscription; next-due/gateway subscription linkage not set up by this plugin.' : '';
 		armwpi_log( 'info', $user_id, 'Assigned ARMember plan #' . $plan_id . ' ("' . $value . '").' . $note );
 	} else {
 		armwpi_log( 'error', $user_id, 'ARMember did not record plan #' . $plan_id . ' ("' . $value . '") after assignment.' );

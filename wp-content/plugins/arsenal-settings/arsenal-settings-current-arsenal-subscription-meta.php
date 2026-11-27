@@ -601,6 +601,15 @@ function arsenal_settings_update_selected_payment_method_meta( $user_id, $prefer
 		return;
 	}
 
+	// ARMember's "manual" is a placeholder (imports / admin assignment). Never let it replace a real method
+	// (e.g. PayPal, GoCardless) that the member already has.
+	if ( 'manual' === strtolower( $method ) ) {
+		$existing = get_user_meta( $user_id, arsenal_settings_selected_payment_method_meta_key(), true );
+		if ( is_string( $existing ) && '' !== trim( $existing ) && 'manual' !== strtolower( trim( $existing ) ) ) {
+			return;
+		}
+	}
+
 	update_user_meta( $user_id, arsenal_settings_selected_payment_method_meta_key(), $method );
 }
 
